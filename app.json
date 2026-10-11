@@ -5,19 +5,47 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B0B0F",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "com.example.strava",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Strava uses your location to trace your run on the map.",
+        "NSMotionUsageDescription": "Strava uses motion data to count your steps and cadence."
+      }
     },
     "android": {
+      "package": "com.example.strava",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#0B0B0F",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACTIVITY_RECOGNITION"
+      ],
       "predictiveBackGestureEnabled": false
     },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Strava uses your location to trace your run on the map."
+        }
+      ],
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "Strava uses motion data to count your steps and cadence."
+        }
+      ],
+      "expo-font",
+      "expo-sharing"
+    ],
     "web": {
       "favicon": "./assets/favicon.png"
     }
