@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "strava",
-    "slug": "strava",
+    "name": "velio",
+    "slug": "velio",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -9,14 +9,14 @@
     "backgroundColor": "#0B0B0F",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.example.strava",
+      "bundleIdentifier": "com.example.velio",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Strava uses your location to trace your run on the map.",
-        "NSMotionUsageDescription": "Strava uses motion data to count your steps and cadence."
+        "NSLocationWhenInUseUsageDescription": "Velio uses your location to trace your run on the map.",
+        "NSMotionUsageDescription": "Velio uses motion data to count your steps and cadence."
       }
     },
     "android": {
-      "package": "com.example.strava",
+      "package": "com.example.velio",
       "adaptiveIcon": {
         "backgroundColor": "#0B0B0F",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -34,13 +34,13 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Strava uses your location to trace your run on the map."
+          "locationWhenInUsePermission": "Velio uses your location to trace your run on the map."
         }
       ],
       [
         "expo-sensors",
         {
-          "motionPermission": "Strava uses motion data to count your steps and cadence."
+          "motionPermission": "Velio uses motion data to count your steps and cadence."
         }
       ],
       "expo-font",

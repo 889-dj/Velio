@@ -19,7 +19,7 @@ export type ShareData = {
   elevGain: number | null;
 };
 
-const BRAND = 'strava'; // app name; change before release
+const BRAND = 'velio';
 
 /**
  * One frame of the share video. Pure function of `p` (0..1), so the in-app preview and the

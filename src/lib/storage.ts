@@ -113,7 +113,7 @@ export async function saveProfile(p: Profile) {
 /** Everything the app stores, as one object (for export). */
 export async function exportAll() {
   const [runs, profile, weightKg] = await Promise.all([loadRuns(), loadProfile(), loadWeight()]);
-  return { app: 'strava-clone', exportedAt: new Date().toISOString(), profile, weightKg, runs };
+  return { app: 'velio', exportedAt: new Date().toISOString(), profile, weightKg, runs };
 }
 
 /** Wipes runs, the in-progress checkpoint, profile and weight. */

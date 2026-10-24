@@ -39,3 +39,13 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# AI agents / Argent tooling
+.agents/
+.claude/
+.codex/
+.kiro/
+.opencode/
+.mcp.json
+opencode.json
+skills-lock.json
