@@ -136,7 +136,7 @@ export default function HomeScreen({ navigation }: Props) {
   return (
     <View style={s.root}>
       <SafeAreaView edges={['top']} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 190 + insets.bottom }} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 220 + insets.bottom }} showsVerticalScrollIndicator={false}>
           <Animated.View entering={enter(0)} style={s.header}>
             <View>
               <Text style={label}>{dateLabel}</Text>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -16,7 +16,8 @@ import { colors, font, label, radius } from '../theme';
 import { Digits, emWidth, fitSize } from '../components/Digits';
 import { CountUp } from '../components/CountUp';
 import { HoldButton } from '../components/HoldButton';
-import { clearActive, saveRun } from '../lib/storage';
+import { clearActive, hasSeenExplainer, loadActive, markExplainerSeen, saveRun } from '../lib/storage';
+import { openSettings } from '../lib/backgroundLocation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Tracking'>;
 
@@ -28,6 +29,7 @@ export default function TrackingScreen({ navigation, route }: Props) {
   const map = useRef<MapView>(null);
   const [count, setCount] = useState<number | null>(null);
   const [toast, setToast] = useState<{ km: number; ms: number } | null>(null);
+  const [explainer, setExplainer] = useState(false);
 
   const last = t.segments.length ? t.segments[t.segments.length - 1] : [];
   const head = last.length ? last[last.length - 1] : null;
@@ -83,15 +85,10 @@ export default function TrackingScreen({ navigation, route }: Props) {
     };
   }, [setOnSplit]);
 
-  const begin = () => {
-    if (t.permission === 'denied') {
-      Alert.alert('Location needed', 'Allow location access so your route can be traced.', [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Open settings', onPress: () => Linking.openSettings() },
-      ]);
-      return;
-    }
-    // 3-2-1, then go
+  const countdownThenStart = async () => {
+    // a run still sitting in the checkpoint (killed app, never recovered) is banked before a new one can overwrite it
+    const stale = await loadActive();
+    if (stale && stale.distance > 50) await saveRun(stale);
     let n = 3;
     setCount(n);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -108,6 +105,29 @@ export default function TrackingScreen({ navigation, route }: Props) {
         t.start(sport);
       }
     }, 900);
+  };
+
+  const needLocation = () =>
+    Alert.alert('Location needed', 'Allow location access so your route can be traced.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Open settings', onPress: () => openSettings() },
+    ]);
+
+  // Start: first time shows the explainer, then foreground and background prompts; afterwards straight in
+  const begin = async () => {
+    if (count != null) return;
+    if (!(await hasSeenExplainer())) return setExplainer(true);
+    const a = t.access === 'denied' ? await t.askPermission() : t.access;
+    if (a === 'denied') return needLocation();
+    countdownThenStart();
+  };
+
+  const continueFromExplainer = async () => {
+    setExplainer(false);
+    await markExplainerSeen();
+    const a = await t.askPermission();
+    if (a === 'denied') return needLocation();
+    countdownThenStart();
   };
 
   const close = () => {
@@ -220,6 +240,16 @@ export default function TrackingScreen({ navigation, route }: Props) {
           <Animated.View entering={FadeInDown} exiting={FadeOut} style={s.lost}>
             <Ionicons name="warning" size={16} color={colors.amber} />
             <Text style={s.lostTxt}>GPS signal lost. Distance keeps counting from your steps.</Text>
+          </Animated.View>
+        )}
+
+        {(running || paused) && t.access !== 'always' && (
+          <Animated.View entering={FadeInDown} exiting={FadeOut} style={s.lost}>
+            <Ionicons name="lock-closed" size={16} color={colors.amber} />
+            <Text style={[s.lostTxt, { flexShrink: 1 }]}>Tracking may pause when your screen locks</Text>
+            <Pressable onPress={() => openSettings()} hitSlop={8} accessibilityRole="button">
+              <Text style={s.bannerLink}>Open Settings</Text>
+            </Pressable>
           </Animated.View>
         )}
 
@@ -336,6 +366,28 @@ export default function TrackingScreen({ navigation, route }: Props) {
           {finished && <Summary t={t} cadenceAvg={cadenceAvg} onSave={save} onDiscard={confirmDiscard} />}
         </View>
       </Animated.View>
+
+      {explainer && (
+        <Animated.View entering={FadeIn} exiting={FadeOut} style={s.explainer}>
+          <View style={[s.explainerCard, { paddingBottom: insets.bottom + 20 }]}>
+            <View style={s.explainerIcon}>
+              <Ionicons name="navigate" size={26} color={colors.accent} />
+            </View>
+            <Text style={s.explainerTitle}>Keep recording with your phone locked</Text>
+            <Text style={s.explainerBody}>
+              Velio traces your route from your phone’s GPS. Next, your phone asks for location access. Choose{' '}
+              <Text style={{ color: colors.text, fontFamily: font.t700 }}>{Platform.OS === 'ios' ? 'Allow While Using, then Always' : 'While using the app, then Allow all the time'}</Text>{' '}
+              so the route has no gaps when the screen is off. Your route stays on this phone.
+            </Text>
+            <Pressable onPress={continueFromExplainer} style={({ pressed }) => [s.startBtn, pressed && { transform: [{ scale: 0.98 }] }]} accessibilityRole="button">
+              <Text style={s.startTxt}>Continue</Text>
+            </Pressable>
+            <Pressable onPress={() => setExplainer(false)} style={{ alignItems: 'center', paddingTop: 14 }} accessibilityRole="button">
+              <Text style={s.discard}>Not now</Text>
+            </Pressable>
+          </View>
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -474,6 +526,7 @@ const s = StyleSheet.create({
   gpsTxt: { color: colors.mute, fontFamily: font.t600, fontSize: 12 },
   lost: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'center', marginTop: 12, backgroundColor: 'rgba(255,176,32,0.14)', borderColor: 'rgba(255,176,32,0.4)', borderWidth: 1, paddingHorizontal: 14, paddingVertical: 9, borderRadius: radius.pill },
   lostTxt: { color: colors.text, fontFamily: font.t600, fontSize: 12 },
+  bannerLink: { color: colors.accent, fontFamily: font.t700, fontSize: 12 },
   toast: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14, backgroundColor: colors.accent, paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.pill },
   toastTxt: { color: colors.onAccent, fontFamily: font.t700, fontSize: 13 },
 
@@ -482,6 +535,11 @@ const s = StyleSheet.create({
   me: { width: 18, height: 18, borderRadius: 9, backgroundColor: colors.accent, borderWidth: 3, borderColor: '#fff' },
   endDot: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: colors.bg },
 
+  explainer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(7,8,10,0.82)', justifyContent: 'flex-end' },
+  explainerCard: { backgroundColor: colors.surface, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, padding: 24, borderWidth: 1, borderColor: colors.hairline },
+  explainerIcon: { width: 52, height: 52, borderRadius: 26, backgroundColor: colors.accentDim, alignItems: 'center', justifyContent: 'center' },
+  explainerTitle: { color: colors.text, fontFamily: font.d800, fontSize: 34, lineHeight: 36, marginTop: 14 },
+  explainerBody: { color: colors.mute, fontFamily: font.t500, fontSize: 14, lineHeight: 21, marginTop: 8, marginBottom: 20 },
   count: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,8,10,0.78)' },
   countTxt: { color: colors.accent, fontFamily: font.d800, fontSize: 220, lineHeight: 230 },
 

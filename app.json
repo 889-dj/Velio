@@ -12,6 +12,7 @@
       "bundleIdentifier": "com.example.velio",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Velio uses your location to trace your run on the map.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Velio keeps recording your route while your screen is locked during a run.",
         "NSMotionUsageDescription": "Velio uses motion data to count your steps and cadence."
       }
     },
@@ -26,7 +27,12 @@
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
-        "ACTIVITY_RECOGNITION"
+        "ACTIVITY_RECOGNITION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
       ],
       "predictiveBackGestureEnabled": false
     },
@@ -34,7 +40,11 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Velio uses your location to trace your run on the map."
+          "locationWhenInUsePermission": "Velio uses your location to trace your run on the map.",
+          "locationAlwaysAndWhenInUsePermission": "Velio keeps recording your route while your screen is locked during a run.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       [
@@ -55,6 +65,12 @@
     "updates": {
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "80450898-9d82-41d8-8632-5f9d313ba81d"
+      }
+    },
+    "owner": "dev-jain"
   }
 }

@@ -20,6 +20,7 @@ export type Run = {
 };
 
 const RUNS = 'runs:v1';
+export const RUNS_KEY = RUNS;
 const ACTIVE = 'run:active:v1';
 
 const round = (c: Coord): Coord => ({
@@ -63,6 +64,15 @@ export const loadActive = () => read<Run | null>(ACTIVE, null);
 export async function clearActive() {
   try {
     await AsyncStorage.removeItem(ACTIVE);
+  } catch {}
+}
+
+// ---------- first-run explainer ----------
+const EXPLAINED = 'tracking:explained:v1';
+export const hasSeenExplainer = async () => (await read<boolean>(EXPLAINED, false)) === true;
+export async function markExplainerSeen() {
+  try {
+    await AsyncStorage.setItem(EXPLAINED, 'true');
   } catch {}
 }
 
@@ -118,5 +128,5 @@ export async function exportAll() {
 
 /** Wipes runs, the in-progress checkpoint, profile and weight. */
 export async function clearEverything() {
-  await AsyncStorage.multiRemove([RUNS, ACTIVE, PROFILE, WEIGHT]);
+  await AsyncStorage.multiRemove([RUNS, ACTIVE, PROFILE, WEIGHT, EXPLAINED]);
 }

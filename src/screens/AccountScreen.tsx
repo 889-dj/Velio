@@ -22,6 +22,7 @@ import * as Location from 'expo-location';
 import * as Sharing from 'expo-sharing';
 import Constants from 'expo-constants';
 import { File, Paths } from 'expo-file-system';
+import * as DocumentPicker from 'expo-document-picker';
 import { Pedometer } from 'expo-sensors';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown, Easing, useReducedMotion } from 'react-native-reanimated';
@@ -40,6 +41,7 @@ import {
   saveProfile,
   saveWeight,
 } from '../lib/storage';
+import { ImportError, MAX_FILE_BYTES, importRuns } from '../lib/backup';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Account'>;
 type Perm = 'granted' | 'denied' | 'undetermined' | 'unavailable';
@@ -78,6 +80,7 @@ export default function AccountScreen({ navigation }: Props) {
   const [loc, setLoc] = useState<PermState>({ status: 'undetermined', canAskAgain: true });
   const [motion, setMotion] = useState<PermState>({ status: 'undetermined', canAskAgain: true });
   const [exporting, setExporting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [typed, setTyped] = useState('');
   const [wiping, setWiping] = useState(false);
@@ -194,6 +197,31 @@ export default function AccountScreen({ navigation }: Props) {
       return false;
     } finally {
       setExporting(false);
+    }
+  };
+
+  const doRestore = async () => {
+    setRestoring(true);
+    try {
+      const pick = await DocumentPicker.getDocumentAsync({ type: ['application/json', 'text/plain', '*/*'], copyToCacheDirectory: true });
+      if (pick.canceled || !pick.assets?.[0]) return;
+      const asset = pick.assets[0];
+      if (asset.size != null && asset.size > MAX_FILE_BYTES) {
+        throw new ImportError('That file is larger than 4 MB, so it can’t be a Velio backup.');
+      }
+      const text = await new File(asset.uri).text();
+      const { imported, skipped } = await importRuns(text);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Restore complete', `Imported ${imported} ${imported === 1 ? 'run' : 'runs'}, skipped ${skipped}.`);
+      load();
+    } catch (e) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert(
+        'Couldn’t restore',
+        e instanceof ImportError ? e.message : 'That file couldn’t be read. Nothing was changed.',
+      );
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -390,6 +418,20 @@ export default function AccountScreen({ navigation }: Props) {
                     </Text>
                   </View>
                   {exporting ? <ActivityIndicator color={colors.accent} /> : <Ionicons name="share-outline" size={20} color={colors.mute} />}
+                </Pressable>
+                <View style={s.sep} />
+                <Pressable
+                  style={({ pressed }) => [s.row, pressed && s.pressed]}
+                  onPress={doRestore}
+                  disabled={restoring}
+                  accessibilityRole="button"
+                >
+                  <Chip icon="push" />
+                  <View style={s.rowText}>
+                    <Text style={s.rowTitle}>Restore from backup</Text>
+                    <Text style={s.rowHint}>Add activities from a file you exported. Runs already on this phone are kept as they are.</Text>
+                  </View>
+                  {restoring ? <ActivityIndicator color={colors.accent} /> : <Ionicons name="folder-open-outline" size={20} color={colors.mute} />}
                 </Pressable>
               </View>
             </Animated.View>

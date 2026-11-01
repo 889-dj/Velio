@@ -1,5 +1,6 @@
 import { registerRootComponent } from 'expo';
 
+import './src/lib/backgroundLocation'; // defines the background location task at module scope
 import App from './App';
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);

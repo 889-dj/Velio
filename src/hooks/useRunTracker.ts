@@ -1,32 +1,39 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import * as Location from 'expo-location';
 import { Pedometer } from 'expo-sensors';
-import { Coord, haversine } from '../lib/geo';
+import { Coord } from '../lib/geo';
+import { Fix, RunEngine, Split } from '../lib/engine';
 import { Run, Sport, saveActive } from '../lib/storage';
+import {
+  Access,
+  readAccess,
+  requestAccess,
+  setLocationSink,
+  startBackground,
+  stopBackground,
+  toFix,
+} from '../lib/backgroundLocation';
 
 export type RunStatus = 'idle' | 'running' | 'paused' | 'finished';
 export type Permission = 'unknown' | 'granted' | 'denied';
 export type Gps = 'searching' | 'good' | 'weak' | 'lost';
 
-// Thresholds from the research notes in design/DIRECTION.md. Starred ones are my own picks.
-const MAX_ACCURACY_M = 20; // drop fixes worse than this
 const GOOD_ACCURACY_M = 10;
-const MAX_SPEED_MS = 12; // GPS-jump guard (~43 km/h)
-const MIN_STEP_M = 3; // ignore standstill jitter
 const GPS_LOST_MS = 6000; // no fix for this long = signal lost
-const GAP_MS = 15000; // a longer hole starts a new line segment, never a straight line across it
-const PACE_WINDOW_MS = 6000; // * short rolling window; 30-60s was reported as too slow
 const AUTOSAVE_MS = 5000;
-const DEFAULT_STRIDE_M = 0.75;
 
 /**
- * Tracks a run. GPS draws the route and measures distance; the pedometer gives steps/cadence and keeps
- * distance moving (via a GPS-calibrated stride) while the GPS signal is lost. State is checkpointed to
- * local storage every few seconds so a crash can be recovered.
+ * Tracks a run. The maths lives in RunEngine; this hook wires it to the sensors and to React. GPS comes from
+ * an OS background task when "Always" access is granted (it keeps delivering with the screen locked) and from
+ * a foreground watcher otherwise. The pedometer keeps distance moving while the GPS signal is lost. State is
+ * checkpointed to local storage every few seconds, and whenever the app goes to the background.
  */
 export function useRunTracker() {
+  const eng = useRef(new RunEngine());
   const [status, setStatus] = useState<RunStatus>('idle');
   const [permission, setPermission] = useState<Permission>('unknown');
+  const [access, setAccess] = useState<Access>('denied');
   const [initial, setInitial] = useState<Coord | null>(null);
   const [segments, setSegments] = useState<Coord[][]>([]);
   const [distance, setDistance] = useState(0);
@@ -35,7 +42,7 @@ export function useRunTracker() {
   const [cadence, setCadence] = useState(0);
   const [currentPace, setCurrentPace] = useState<number | null>(null);
   const [pedometerOk, setPedometerOk] = useState(false);
-  const [splits, setSplits] = useState<{ km: number; ms: number }[]>([]);
+  const [splits, setSplits] = useState<Split[]>([]);
   const [gps, setGps] = useState<Gps>('searching');
   const [accuracy, setAccuracy] = useState<number | null>(null);
 
@@ -43,59 +50,48 @@ export function useRunTracker() {
   const pedoSub = useRef<{ remove: () => void } | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const saver = useRef<ReturnType<typeof setInterval> | null>(null);
+  const usingBackground = useRef(false);
+  const accessRef = useRef<Access>('denied');
+  const ticks = useRef(0);
 
-  const statusRef = useRef<RunStatus>('idle');
-  const sportRef = useRef<Sport>('run');
-  const runId = useRef('');
-  const startedAt = useRef(0);
-  const lastPoint = useRef<{ c: Coord; t: number } | null>(null);
-  const lastFixAt = useRef(0); // last accepted fix
-  const lastAnyFixAt = useRef(0); // last fix of any quality
+  const lastAnyFixAt = useRef(0);
   const lastAcc = useRef<number | null>(null);
-  const gpsDistance = useRef(0);
-  const fallbackDistance = useRef(0);
   const stepBase = useRef(0);
-  const stepsRef = useRef(0);
   const lastWatchSteps = useRef(0);
-  const stride = useRef(DEFAULT_STRIDE_M);
-  const accMs = useRef(0);
-  const resumedAt = useRef(0);
-  const trail = useRef<{ t: number; d: number }[]>([]);
   const stepTrail = useRef<{ t: number; s: number }[]>([]);
-  const splitsDone = useRef(0);
-  const splitMark = useRef(0);
-  const segmentsRef = useRef<Coord[][]>([]);
-  const splitsRef = useRef<{ km: number; ms: number }[]>([]);
-  const paceRef = useRef<number | null>(null);
-  const trackRef = useRef<[number, number, number | null][]>([]);
-  const cadenceRef = useRef<[number, number][]>([]);
   const lastCadenceAt = useRef(0);
   /** Screens set this to react to a completed km (toast, haptic) without an effect. */
-  const onSplit = useRef<((s: { km: number; ms: number }) => void) | null>(null);
-  const setOnSplit = useCallback((fn: ((s: { km: number; ms: number }) => void) | null) => {
+  const onSplit = useRef<((s: Split) => void) | null>(null);
+  const setOnSplit = useCallback((fn: ((s: Split) => void) | null) => {
     onSplit.current = fn;
   }, []);
 
-  const setStat = (s: RunStatus) => {
-    statusRef.current = s;
-    setStatus(s);
-  };
+  const sync = useCallback(() => {
+    const e = eng.current;
+    setStatus(e.state);
+    setSegments(e.segments);
+    setDistance(e.distance);
+    setSteps(e.steps);
+    setSplits(e.splits);
+    setCurrentPace(e.currentPace);
+  }, []);
 
-  useEffect(() => {
-    segmentsRef.current = segments;
-  }, [segments]);
-  useEffect(() => {
-    splitsRef.current = splits;
-  }, [splits]);
+  const refreshAccess = useCallback(async () => {
+    const a = await readAccess();
+    accessRef.current = a;
+    setAccess(a);
+    setPermission(a === 'denied' ? 'denied' : 'granted');
+    return a;
+  }, []);
 
-  // permission + first fix so the map can centre before the run starts
+  // read (never request) permission and, if already granted, a first fix so the map can centre
   useEffect(() => {
     let alive = true;
     (async () => {
-      const { status: st } = await Location.requestForegroundPermissionsAsync();
+      const fg = await Location.getForegroundPermissionsAsync();
       if (!alive) return;
-      if (st !== 'granted') return setPermission('denied');
-      setPermission('granted');
+      if (!fg.granted) return setPermission(fg.canAskAgain ? 'unknown' : 'denied');
+      await refreshAccess();
       try {
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         if (!alive) return;
@@ -109,116 +105,62 @@ export function useRunTracker() {
     return () => {
       alive = false;
     };
+  }, [refreshAccess]);
+
+  /** First-run explainer has been shown: ask the OS, foreground then background. */
+  const askPermission = useCallback(async () => {
+    let a = await requestAccess();
+    if (a === 'while-using') {
+      // iOS can resolve the request before the user answers the "Always" upgrade prompt
+      await new Promise((r) => setTimeout(r, 1200));
+      a = await readAccess();
+    }
+    accessRef.current = a;
+    setAccess(a);
+    setPermission(a === 'denied' ? 'denied' : 'granted');
+    if (a !== 'denied') {
+      try {
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        setInitial({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+      } catch {}
+    }
+    return a;
   }, []);
-
-  const elapsedNow = () =>
-    accMs.current + (statusRef.current === 'running' ? Date.now() - resumedAt.current : 0);
-
-  const buildRun = useCallback(
-    (): Run => ({
-      id: runId.current,
-      sport: sportRef.current,
-      startedAt: startedAt.current,
-      endedAt: Date.now(),
-      distance: gpsDistance.current + fallbackDistance.current,
-      elapsed: elapsedNow(),
-      steps: stepsRef.current,
-      segments: segmentsRef.current,
-      splits: splitsRef.current,
-      track: trackRef.current,
-      cadence: cadenceRef.current,
-    }),
-    [],
-  );
 
   const checkpoint = useCallback(() => {
-    if (!runId.current) return;
-    saveActive(buildRun());
-  }, [buildRun]);
-
-  const publishDistance = useCallback(() => {
-    const d = gpsDistance.current + fallbackDistance.current;
-    setDistance(d);
-    const km = Math.floor(d / 1000);
-    if (km > splitsDone.current) {
-      const now = elapsedNow();
-      const ms = now - splitMark.current;
-      splitMark.current = now;
-      splitsDone.current = km;
-      setSplits((s) => [...s, { km, ms }]);
-      onSplit.current?.({ km, ms });
-    }
+    const e = eng.current;
+    if (!e.id || e.state === 'idle') return;
+    saveActive(e.toRun(Date.now()));
   }, []);
 
-  const pushSample = useCallback((alt: number | null) => {
-    const d = gpsDistance.current + fallbackDistance.current;
-    trackRef.current.push([Math.round(elapsedNow()), +d.toFixed(1), alt == null ? null : +alt.toFixed(1)]);
-  }, []);
-
-  const onLocation = useCallback((loc: Location.LocationObject) => {
-    if (statusRef.current !== 'running') return;
-    const { latitude, longitude, accuracy: acc } = loc.coords;
-    lastAnyFixAt.current = Date.now();
-    lastAcc.current = acc;
-    setAccuracy(acc);
-    if (acc != null && acc > MAX_ACCURACY_M) return;
-
-    const c: Coord = { latitude, longitude };
-    const t = loc.timestamp;
-    const prev = lastPoint.current;
-    lastFixAt.current = Date.now();
-
-    // first fix of a segment, or we lost signal long enough that drawing a line would be a lie
-    if (!prev || t - prev.t > GAP_MS) {
-      lastPoint.current = { c, t };
-      trail.current = [];
-      pushSample(loc.coords.altitude);
-      setSegments((s) => {
-        const next = s.slice();
-        if (!prev) next[next.length - 1] = [c];
-        else next.push([c]);
-        return next;
-      });
-      return;
-    }
-
-    const d = haversine(prev.c, c);
-    const dt = Math.max((t - prev.t) / 1000, 0.001);
-    if (d < MIN_STEP_M || d / dt > MAX_SPEED_MS) return;
-
-    gpsDistance.current += d;
-    lastPoint.current = { c, t };
-    publishDistance();
-    pushSample(loc.coords.altitude);
-
-    // short rolling window for current pace, lightly smoothed
-    trail.current.push({ t, d: gpsDistance.current });
-    while (trail.current.length > 1 && t - trail.current[0].t > PACE_WINDOW_MS) trail.current.shift();
-    const first = trail.current[0];
-    const dd = gpsDistance.current - first.d;
-    if (dd > 3) {
-      const raw = (t - first.t) / 1000 / (dd / 1000);
-      const smooth = paceRef.current == null ? raw : paceRef.current * 0.5 + raw * 0.5;
-      paceRef.current = smooth;
-      setCurrentPace(smooth);
-    }
-
-    if (stepsRef.current > 100 && gpsDistance.current > 100) {
-      stride.current = gpsDistance.current / stepsRef.current;
-    }
-
-    setSegments((s) => {
-      const next = s.slice();
-      next[next.length - 1] = [...next[next.length - 1], c];
-      return next;
-    });
-  }, [publishDistance, pushSample]);
+  const receive = useCallback(
+    (fixes: Fix[]) => {
+      const e = eng.current;
+      if (e.state !== 'running' || !fixes.length) return;
+      const newest = fixes.reduce((a, b) => (b.timestamp > a.timestamp ? b : a));
+      lastAnyFixAt.current = Date.now();
+      lastAcc.current = newest.accuracy;
+      setAccuracy(newest.accuracy);
+      const made = e.ingestBatch(fixes);
+      sync();
+      made.forEach((sp) => onSplit.current?.(sp));
+    },
+    [sync],
+  );
 
   const startSensors = useCallback(async () => {
-    locSub.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.High, timeInterval: 1000, distanceInterval: 5 },
-      onLocation,
-    );
+    setLocationSink(receive);
+    usingBackground.current = false;
+    const a = await readAccess();
+    accessRef.current = a;
+    setAccess(a);
+    if (a === 'always') usingBackground.current = await startBackground();
+    if (!usingBackground.current) {
+      locSub.current = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.High, timeInterval: 1000, distanceInterval: 5 },
+        (l) => receive([toFix(l)]),
+      );
+    }
 
     try {
       const avail = await Pedometer.isAvailableAsync();
@@ -228,17 +170,20 @@ export function useRunTracker() {
         if (perm.granted) {
           lastWatchSteps.current = 0;
           pedoSub.current = Pedometer.watchStepCount(({ steps: n }) => {
-            if (statusRef.current !== 'running') return;
+            const e = eng.current;
+            if (e.state !== 'running') return;
             const delta = n - lastWatchSteps.current;
             lastWatchSteps.current = n;
             const total = stepBase.current + n;
-            stepsRef.current = total;
+            const lost = Date.now() - e.lastFixAt > GPS_LOST_MS;
+            const made = e.addSteps(total, delta, lost);
             setSteps(total);
-
-            // GPS lost? keep distance ticking from steps so the run isn't short-changed
-            if (Date.now() - lastFixAt.current > GPS_LOST_MS && delta > 0) {
-              fallbackDistance.current += delta * stride.current;
-              publishDistance();
+            if (lost && delta > 0) {
+              setDistance(e.distance);
+              if (made) {
+                setSplits(e.splits);
+                onSplit.current?.(made);
+              }
             }
 
             const now = Date.now();
@@ -250,7 +195,7 @@ export function useRunTracker() {
             setCadence(spm);
             if (spm > 0 && now - lastCadenceAt.current > 4000) {
               lastCadenceAt.current = now;
-              cadenceRef.current.push([Math.round(elapsedNow()), spm]);
+              e.cadence.push([Math.round(e.elapsed(now)), spm]);
             }
           });
         }
@@ -258,103 +203,102 @@ export function useRunTracker() {
     } catch {
       setPedometerOk(false);
     }
-  }, [onLocation, publishDistance]);
+  }, [receive]);
 
   const stopSensors = useCallback(() => {
     locSub.current?.remove();
     locSub.current = null;
     pedoSub.current?.remove();
     pedoSub.current = null;
-    stepBase.current = stepsRef.current;
+    if (usingBackground.current) stopBackground();
+    usingBackground.current = false;
+    setLocationSink(null);
+    stepBase.current = eng.current.steps;
     lastWatchSteps.current = 0;
   }, []);
 
   const startTimers = useCallback(() => {
-    resumedAt.current = Date.now();
     timer.current = setInterval(() => {
-      setElapsed(accMs.current + (Date.now() - resumedAt.current));
-      // derive GPS health once per tick
-      const since = Date.now() - lastAnyFixAt.current;
+      const now = Date.now();
+      setElapsed(eng.current.elapsed(now));
+      const since = now - lastAnyFixAt.current;
       const a = lastAcc.current;
       setGps(since > GPS_LOST_MS ? 'lost' : a != null && a <= GOOD_ACCURACY_M ? 'good' : 'weak');
+      // keep the lock-screen banner honest if the user changes the permission mid-run
+      if (accessRef.current !== 'always' && ++ticks.current % 6 === 0) refreshAccess();
     }, 500);
     saver.current = setInterval(checkpoint, AUTOSAVE_MS);
-  }, [checkpoint]);
+  }, [checkpoint, refreshAccess]);
   const stopTimers = () => {
     if (timer.current) clearInterval(timer.current);
     if (saver.current) clearInterval(saver.current);
     timer.current = null;
     saver.current = null;
-    accMs.current += Date.now() - resumedAt.current;
-    setElapsed(accMs.current);
   };
 
-  const beginSegment = () => {
-    lastPoint.current = null; // never count the gap between pause and resume
-    lastFixAt.current = Date.now();
-    lastAnyFixAt.current = Date.now();
-    trail.current = [];
-    paceRef.current = null;
-    setSegments((s) => [...s, []]);
-  };
+  // the OS may suspend or kill us once we are in the background: put the run on disk first
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st !== 'active') checkpoint();
+      else {
+        refreshAccess();
+      }
+      if (st === 'active' && eng.current.state === 'running') {
+        setElapsed(eng.current.elapsed(Date.now()));
+        sync();
+      }
+    });
+    return () => sub.remove();
+  }, [checkpoint, sync, refreshAccess]);
 
   const start = useCallback(
     async (sport: Sport = 'run') => {
-      sportRef.current = sport;
-      runId.current = `${Date.now()}`;
-      startedAt.current = Date.now();
-      gpsDistance.current = 0;
-      fallbackDistance.current = 0;
+      const now = Date.now();
       stepBase.current = 0;
-      stepsRef.current = 0;
-      accMs.current = 0;
-      stride.current = DEFAULT_STRIDE_M;
       stepTrail.current = [];
-      splitsDone.current = 0;
-      splitMark.current = 0;
-      segmentsRef.current = [];
-      splitsRef.current = [];
-      trackRef.current = [];
-      cadenceRef.current = [];
       lastCadenceAt.current = 0;
-      setSplits([]);
-      setSegments([]);
-      setDistance(0);
-      setSteps(0);
-      setCadence(0);
+      lastAnyFixAt.current = now;
+      eng.current.start(now, sport);
       setElapsed(0);
-      setCurrentPace(null);
-      beginSegment();
-      setStat('running');
+      setCadence(0);
+      sync();
       startTimers();
       await startSensors();
     },
-    [startSensors, startTimers],
+    [startSensors, startTimers, sync],
   );
 
   const pause = useCallback(() => {
-    if (statusRef.current !== 'running') return;
+    if (eng.current.state !== 'running') return;
+    eng.current.pause(Date.now());
     stopTimers();
-    setStat('paused');
     stopSensors();
-    setCurrentPace(null);
+    setElapsed(eng.current.elapsed(Date.now()));
+    sync();
     checkpoint();
-  }, [stopSensors, checkpoint]);
+  }, [stopSensors, checkpoint, sync]);
 
   const resume = useCallback(async () => {
-    if (statusRef.current !== 'paused') return;
-    beginSegment();
-    setStat('running');
+    if (eng.current.state !== 'paused') return;
+    const now = Date.now();
+    lastAnyFixAt.current = now;
+    eng.current.resume(now);
+    sync();
     startTimers();
     await startSensors();
-  }, [startSensors, startTimers]);
+  }, [startSensors, startTimers, sync]);
 
   const finish = useCallback(() => {
-    if (statusRef.current === 'running') stopTimers();
+    const now = Date.now();
+    stopTimers();
     stopSensors();
-    setStat('finished');
+    eng.current.finish(now);
+    setElapsed(eng.current.elapsed(now));
+    sync();
     checkpoint(); // the finished run is on disk before the summary even renders
-  }, [stopSensors, checkpoint]);
+  }, [stopSensors, checkpoint, sync]);
+
+  const buildRun = useCallback((): Run => eng.current.toRun(Date.now()), []);
 
   useEffect(
     () => () => {
@@ -362,6 +306,8 @@ export function useRunTracker() {
       if (saver.current) clearInterval(saver.current);
       locSub.current?.remove();
       pedoSub.current?.remove();
+      if (usingBackground.current) stopBackground();
+      setLocationSink(null);
     },
     [],
   );
@@ -371,6 +317,7 @@ export function useRunTracker() {
   return {
     status,
     permission,
+    access,
     initial,
     segments,
     distance,
@@ -389,5 +336,7 @@ export function useRunTracker() {
     finish,
     buildRun,
     setOnSplit,
+    askPermission,
+    refreshAccess,
   };
 }
