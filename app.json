@@ -43,6 +43,7 @@
           "motionPermission": "Velio uses motion data to count your steps and cadence."
         }
       ],
+      "@maplibre/maplibre-react-native",
       "expo-font",
       "expo-sharing"
     ],
