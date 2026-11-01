@@ -62,7 +62,7 @@ the identity: pace-coloured route with casing + glow, condensed numerals in fixe
 - Autosave each point locally; recover interrupted run on next launch.
 - Background tracking (screen locked) needs TaskManager + a **development build**; not supported in Expo Go on iOS.
 - Auto-pause: no source found for thresholds. Use hysteresis (pause below low speed for several seconds, resume above a higher one). Thresholds are my own guess; label as such.
-- react-native-maps works in Expo Go with the default provider; Google tiles need keys + a dev build. Test polylines on a real device (one report of overlays not drawing on-device while fine in simulator).
+- Maps use MapLibre (`@maplibre/maplibre-react-native`) with free OpenFreeMap tiles, recoloured dark at runtime in `src/lib/mapStyle.ts`. It has native code, so it needs a development build (not Expo Go). Test polylines on a real device.
 
 ## Motion spec
 Sourced: ring tick ~300ms ease-out, press scale 0.96 (third-party draft); route draw-in via stroke-dashoffset; escalating haptics on hold.

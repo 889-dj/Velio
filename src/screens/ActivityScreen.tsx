@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import { Camera, Map, Marker, type CameraRef } from '@maplibre/maplibre-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -14,6 +14,8 @@ import { Digits, emWidth, fitSize } from '../components/Digits';
 import { LineChart, SplitBars } from '../components/charts';
 import { Run, DEFAULT_WEIGHT_KG, deleteRun, loadRuns, loadWeight, saveWeight } from '../lib/storage';
 import { Coord, formatDuration, formatKm, formatPace } from '../lib/geo';
+import { boundsOf, toLngLat, useMapStyle } from '../lib/mapStyle';
+import { RouteLines, type RouteLine } from '../components/RouteLines';
 import { titleOf, whenOf } from '../lib/format';
 import {
   avgPaceOf,
@@ -45,7 +47,8 @@ const mixHex = (a: string, b: string, t: number) => {
 export default function ActivityScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const map = useRef<MapView>(null);
+  const camera = useRef<CameraRef>(null);
+  const { style: mapStyle } = useMapStyle();
 
   const [run, setRun] = useState<Run | null>(null);
   const [history, setHistory] = useState<Run[]>([]);
@@ -151,9 +154,26 @@ export default function ActivityScreen({ navigation, route }: Props) {
     return coords.filter((_, i) => run.track![i][1] >= lo && run.track![i][1] <= hi + 40);
   };
 
+  const highlight = selectedKm != null ? kmSlice(selectedKm) : [];
+  const routeLines = useMemo<RouteLine[]>(() => {
+    const out: RouteLine[] = layers.map((l) => ({
+      coords: l.coords,
+      color: selectedKm != null && l.width === 5 ? withAlpha(l.color, 0.3) : l.color,
+      width: l.width,
+      z: l.width === 16 ? 0 : l.width === 9 ? 1 : 2,
+    }));
+    if (highlight.length > 1) out.push({ coords: highlight, color: '#FFFFFF', width: 6, z: 3 });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layers, selectedKm]);
+
   const fit = (pts: Coord[], animated: boolean, bottom = 150) => {
-    if (pts.length < 2) return;
-    map.current?.fitToCoordinates(pts, { edgePadding: { top: 110, right: 40, bottom, left: 40 }, animated });
+    const b = pts.length < 2 ? null : boundsOf(pts);
+    if (!b) return;
+    camera.current?.fitBounds(b, {
+      padding: { top: 110, right: 40, bottom, left: 40 },
+      duration: animated ? 500 : 0,
+    });
   };
   useEffect(() => {
     if (selectedKm == null) return fit(coords, true);
@@ -209,53 +229,44 @@ export default function ActivityScreen({ navigation, route }: Props) {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: insets.bottom + 48 }}>
         {/* map hero */}
         <View style={{ height: MAP_H + insets.top * 0 }}>
-          <MapView
-            ref={map}
-            style={StyleSheet.absoluteFill}
-            userInterfaceStyle="dark"
-            mapType="mutedStandard"
-            customMapStyle={darkMapStyle}
-            scrollEnabled={false}
-            zoomEnabled={false}
-            rotateEnabled={false}
-            pitchEnabled={false}
-            showsCompass={false}
-            showsPointsOfInterests={false}
-            onMapReady={() => fit(coords, false)}
-          >
-            {layers.map((l) => (
-              <Polyline
-                key={l.key}
-                coordinates={l.coords}
-                strokeColor={selectedKm != null && l.width === 5 ? withAlpha(l.color, 0.3) : l.color}
-                strokeWidth={l.width}
-                lineCap="round"
-                lineJoin="round"
-              />
-            ))}
-            {selectedKm != null && kmSlice(selectedKm).length > 1 && (
-              <Polyline coordinates={kmSlice(selectedKm)} strokeColor="#FFFFFF" strokeWidth={6} lineCap="round" lineJoin="round" />
-            )}
-            {coords.length > 0 && (
-              <Marker coordinate={coords[0]} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={false}>
-                <View style={s.startDot} />
-              </Marker>
-            )}
-            {coords.length > 1 && (
-              <Marker coordinate={coords[coords.length - 1]} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={false}>
-                <View style={s.endDot}>
-                  <Ionicons name="flag" size={11} color={colors.onAccent} />
-                </View>
-              </Marker>
-            )}
-            {marker && (
-              <Marker coordinate={marker} anchor={{ x: 0.5, y: 0.5 }}>
-                <View style={s.scrubHalo}>
-                  <View style={s.scrubDot} />
-                </View>
-              </Marker>
-            )}
-          </MapView>
+          {mapStyle && (
+            <Map
+              style={StyleSheet.absoluteFill}
+              mapStyle={mapStyle}
+              dragPan={false}
+              touchZoom={false}
+              doubleTapZoom={false}
+              doubleTapHoldZoom={false}
+              touchRotate={false}
+              touchPitch={false}
+              compass={false}
+              logo={false}
+              attributionPosition={{ top: insets.top + 64, left: 10 }}
+              onDidFinishLoadingMap={() => fit(coords, false)}
+            >
+              <Camera ref={camera} initialViewState={{ center: coords[0] ? toLngLat(coords[0]) : [0, 20], zoom: coords[0] ? 14 : 1.5 }} />
+              <RouteLines id="route" lines={routeLines} />
+              {coords.length > 0 && (
+                <Marker lngLat={toLngLat(coords[0])} anchor="center">
+                  <View style={s.startDot} />
+                </Marker>
+              )}
+              {coords.length > 1 && (
+                <Marker lngLat={toLngLat(coords[coords.length - 1])} anchor="center">
+                  <View style={s.endDot}>
+                    <Ionicons name="flag" size={11} color={colors.onAccent} />
+                  </View>
+                </Marker>
+              )}
+              {marker && (
+                <Marker lngLat={toLngLat(marker)} anchor="center">
+                  <View style={s.scrubHalo}>
+                    <View style={s.scrubDot} />
+                  </View>
+                </Marker>
+              )}
+            </Map>
+          )}
 
           <LinearGradient colors={['rgba(11,11,12,0.9)', 'rgba(11,11,12,0)']} style={[s.topFade, { height: insets.top + 80 }]} pointerEvents="none" />
           <LinearGradient colors={['rgba(11,11,12,0)', colors.bg]} style={s.bottomFade} pointerEvents="none" />
@@ -613,16 +624,6 @@ function GlassButton({ icon, onPress }: { icon: keyof typeof Ionicons.glyphMap; 
     </Pressable>
   );
 }
-
-const darkMapStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#11141a' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#6f7683' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#11141a' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#222833' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#080a0d' }] },
-  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-];
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },

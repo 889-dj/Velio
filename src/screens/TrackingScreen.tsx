@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import { Camera, Map, Marker, type CameraRef } from '@maplibre/maplibre-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -12,6 +12,8 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../App';
 import { useRunTracker } from '../hooks/useRunTracker';
 import { formatDuration, formatKm, formatPace } from '../lib/geo';
+import { boundsOf, toLngLat, useMapStyle } from '../lib/mapStyle';
+import { RouteLines, routeLinesFor } from '../components/RouteLines';
 import { colors, font, label, radius } from '../theme';
 import { Digits, emWidth, fitSize } from '../components/Digits';
 import { CountUp } from '../components/CountUp';
@@ -25,7 +27,9 @@ export default function TrackingScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
   const t = useRunTracker();
-  const map = useRef<MapView>(null);
+  const camera = useRef<CameraRef>(null);
+  const framed = useRef(false);
+  const { style: mapStyle } = useMapStyle();
   const [count, setCount] = useState<number | null>(null);
   const [toast, setToast] = useState<{ km: number; ms: number } | null>(null);
 
@@ -33,6 +37,7 @@ export default function TrackingScreen({ navigation, route }: Props) {
   const head = last.length ? last[last.length - 1] : null;
   const start = t.segments[0]?.[0] ?? null;
   const all = t.segments.flat();
+  const lines = useMemo(() => routeLinesFor(t.segments, colors.accent), [t.segments]);
 
   const idle = t.status === 'idle';
   const running = t.status === 'running';
@@ -51,17 +56,26 @@ export default function TrackingScreen({ navigation, route }: Props) {
   useEffect(() => {
     const target = head ?? t.initial;
     if (target && !finished) {
-      map.current?.animateCamera({ center: target, zoom: 17.5, pitch: 0 }, { duration: 700 });
+      // first fix: snap there; afterwards glide so the follow-cam feels smooth
+      if (!framed.current) {
+        framed.current = true;
+        camera.current?.jumpTo({ center: toLngLat(target), zoom: 17.5, pitch: 0 });
+      } else {
+        camera.current?.easeTo({ center: toLngLat(target), zoom: 17.5, pitch: 0, duration: 700 });
+      }
     }
   }, [head, t.initial, finished]);
 
   // frame the whole route when done
   useEffect(() => {
     if (!finished || all.length < 2) return;
-    map.current?.fitToCoordinates(all, {
-      edgePadding: { top: 90, right: 50, bottom: Math.min(height * 0.55, 470), left: 50 },
-      animated: true,
-    });
+    const b = boundsOf(all);
+    if (b) {
+      camera.current?.fitBounds(b, {
+        padding: { top: 90, right: 50, bottom: Math.min(height * 0.55, 470), left: 50 },
+        duration: 600,
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finished]);
 
@@ -140,7 +154,7 @@ export default function TrackingScreen({ navigation, route }: Props) {
 
   const locate = () => {
     const target = head ?? t.initial;
-    if (target) map.current?.animateCamera({ center: target, zoom: 17.5 }, { duration: 400 });
+    if (target) camera.current?.easeTo({ center: toLngLat(target), zoom: 17.5, duration: 400 });
   };
 
   const cadenceAvg = t.elapsed > 20000 ? Math.round(t.steps / (t.elapsed / 60000)) : 0;
@@ -149,39 +163,44 @@ export default function TrackingScreen({ navigation, route }: Props) {
 
   return (
     <View style={s.root}>
-      <MapView
-        ref={map}
-        style={StyleSheet.absoluteFill}
-        userInterfaceStyle="dark"
-        mapType="mutedStandard"
-        showsUserLocation={idle}
-        showsMyLocationButton={false}
-        showsCompass={false}
-        showsPointsOfInterests={false}
-        pitchEnabled={false}
-        customMapStyle={darkMapStyle}
-        initialRegion={t.initial ? { ...t.initial, latitudeDelta: 0.004, longitudeDelta: 0.004 } : undefined}
-      >
-        {t.segments.map((seg, i) =>
-          seg.length > 1 ? (
-            <Group key={i} coords={seg} />
-          ) : null,
-        )}
-        {start && !idle && (
-          <Marker coordinate={start} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={false}>
-            <View style={s.startDot} />
-          </Marker>
-        )}
-        {head && !idle && (
-          <Marker coordinate={head} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={false}>
-            {finished ? (
-              <View style={s.endDot}><Ionicons name="flag" size={12} color={colors.onAccent} /></View>
-            ) : (
+      {mapStyle && (
+        <Map
+          style={StyleSheet.absoluteFill}
+          mapStyle={mapStyle}
+          compass={false}
+          logo={false}
+          touchPitch={false}
+          touchRotate={false}
+          attributionPosition={{ top: insets.top + 64, left: 10 }}
+        >
+          <Camera
+            ref={camera}
+            initialViewState={
+              t.initial ? { center: toLngLat(t.initial), zoom: 17.5 } : { center: [0, 20], zoom: 1.5 }
+            }
+          />
+          <RouteLines id="route" lines={lines} />
+          {idle && t.initial && (
+            <Marker lngLat={toLngLat(t.initial)} anchor="center">
               <View style={s.halo}><View style={s.me} /></View>
-            )}
-          </Marker>
-        )}
-      </MapView>
+            </Marker>
+          )}
+          {start && !idle && (
+            <Marker lngLat={toLngLat(start)} anchor="center">
+              <View style={s.startDot} />
+            </Marker>
+          )}
+          {head && !idle && (
+            <Marker lngLat={toLngLat(head)} anchor="center">
+              {finished ? (
+                <View style={s.endDot}><Ionicons name="flag" size={12} color={colors.onAccent} /></View>
+              ) : (
+                <View style={s.halo}><View style={s.me} /></View>
+              )}
+            </Marker>
+          )}
+        </Map>
+      )}
 
       {/* top scrim + readout */}
       <LinearGradient
@@ -340,17 +359,6 @@ export default function TrackingScreen({ navigation, route }: Props) {
   );
 }
 
-/** Route drawn as glow + casing + core line so it reads over any map. */
-function Group({ coords }: { coords: { latitude: number; longitude: number }[] }) {
-  return (
-    <>
-      <Polyline coordinates={coords} strokeColor="rgba(200,255,46,0.18)" strokeWidth={16} lineCap="round" lineJoin="round" />
-      <Polyline coordinates={coords} strokeColor="rgba(7,8,10,0.85)" strokeWidth={9} lineCap="round" lineJoin="round" />
-      <Polyline coordinates={coords} strokeColor={colors.accent} strokeWidth={5} lineCap="round" lineJoin="round" />
-    </>
-  );
-}
-
 function Summary({
   t,
   cadenceAvg,
@@ -448,16 +456,6 @@ function GlassButton({ onPress, icon }: { onPress: () => void; icon: keyof typeo
     </Pressable>
   );
 }
-
-const darkMapStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#11141a' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#6f7683' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#11141a' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#222833' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#080a0d' }] },
-  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-];
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
