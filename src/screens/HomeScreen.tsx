@@ -296,6 +296,24 @@ export default function HomeScreen({ navigation }: Props) {
               ))}
             </Animated.View>
           )}
+
+          {runs && runs.length > 0 && (
+            <Animated.View entering={enter(6)}>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  navigation.navigate('History');
+                }}
+                style={s.allRow}
+                accessibilityRole="button"
+              >
+                <Ionicons name="calendar-clear-outline" size={18} color={colors.accent} />
+                <Text style={s.allTxt}>All activities</Text>
+                <Text style={s.allCount}>{runs.length}</Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.mute} />
+              </Pressable>
+            </Animated.View>
+          )}
         </ScrollView>
       </SafeAreaView>
 
@@ -375,6 +393,9 @@ function Best({ k, v }: { k: string; v: string }) {
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  allRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 52, marginTop: 16, paddingHorizontal: 16, backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.hairline },
+  allTxt: { flex: 1, color: colors.text, fontFamily: font.t600, fontSize: 14 },
+  allCount: { color: colors.mute, fontFamily: font.t500, fontSize: 13 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, marginBottom: 22 },
   title: { color: colors.text, fontFamily: font.d800, fontSize: 40, lineHeight: 42, marginTop: 2 },
   avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surface2, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.hairline },

@@ -196,3 +196,35 @@ Public default; one flat 20-row list; "Are you sure?" with OK; hidden export; de
 ## Not built / honest gaps
 Units (km/mi) switch: would have to be threaded through every screen's formatting, so it is not faked. Avatar photo (needs image picker + a rebuild
 of plugin config). GPX export. Editing past activities' privacy. Email-confirmed deletion (no backend).
+
+---
+
+# Addendum: Activity history screen
+
+Research round 5: Mobbin MCP (3 screen searches, main thread) plus 5 Haiku agents (leaders, user pain, galleries, motion, feasibility).
+Thin spots: every Dribbble/Behance/Refero-style gallery returned little or nothing usable, Reddit was not reached, store reviews were second-hand, and Material/Apple motion values were not retrieved.
+
+## Layout (top to bottom)
+1. Back + "Activities" title.
+2. Year chips (All time, then years with activity). Hidden with one year of history: there is nothing to choose.
+3. Hero: scope label, giant total distance, then count, moving time, avg pace. It follows every filter.
+4. Period bars inside the hero: 12 months for a year, or one bar per year for All time. Tap to drill in; tap the month again to clear.
+5. Sport chips and sort chips in one scrolling row.
+6. List: sticky month headers with count and distance; rows with still route thumbnail, title, record badge, date, distance, time, pace.
+
+## Decisions and sources
+- Tap-a-bar period drill-down (Strava: https://support.strava.com/en-us/articles/15402014-viewing-your-activity-history-on-strava; yearly bars: AllTrails https://mobbin.com/screens/b1ec81de-e8ff-4800-8308-efa22e4cd428).
+- Month headers with rolled-up totals (Nike Run Club https://mobbin.com/screens/c20a7fbc-a50f-4f54-8d4f-4fec4bf84ca1; requested by users: https://discussions.apple.com/thread/255089521).
+- Route thumbnails make runs recognisable at a glance (Strava https://mobbin.com/screens/cb70ca4a-6b1d-4570-8fa2-d0b7425445b8, komoot https://mobbin.com/screens/9f456179-4651-4e9b-afe4-88ad992c8f0e).
+- Sport and date filter independently (Garmin users report a date filter that needs a type first: https://forums.garmin.com/apps-software/mobile-apps-web/f/garmin-connect-web/321568/filter-all-activities).
+- Sort the whole set (Garmin users report sorting only the loaded batch: https://forums.garmin.com/apps-software/mobile-apps-web/f/garmin-connect-web/250855/garmin-connect-activity-sorting). Fastest ignores activities under 1 km, the same floor Home uses for best pace.
+- Delete acts at once with a 5 s Undo instead of a confirm dialog, restoring the full run (recoverable delete: https://support.strava.com/en-us/articles/15401877-how-to-restore-a-deleted-activity).
+- Empty state teaches and offers the next step (avoids the bare one-liners seen in Gymshark https://mobbin.com/screens/f3d52e41-926f-49b7-be3f-8be131497657 and Hevy https://mobbin.com/screens/8d621765-711f-4ad6-9d5d-c223732232f5).
+- SectionList with sticky headers set explicitly (off by default on Android: https://reactnative.dev/docs/sectionlist); removeClippedSubviews off because it can drop content (https://reactnative.dev/docs/optimizing-flatlist-configuration).
+
+## Motion
+Sourced: Reanimated presets default to 300 ms; System reduce-motion handling (https://docs.swmansion.com/react-native-reanimated/docs/guides/accessibility).
+Mine, not sourced: bars 300 ms ease-out cubic, first 8 rows 40 ms stagger, 5 s undo window, toast in 220 ms and out 160 ms. Rows do not animate on filter changes (LinearTransition with a list is unverified).
+
+## Left out on purpose
+Text search (titles are generated, so there is nothing to search yet). Swipe to delete (needs gesture-handler and a native rebuild; the trash button with Undo does the job). Calendar heatmap, gear filters, route grouping (needs more data than a run holds today).

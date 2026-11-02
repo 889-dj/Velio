@@ -13,6 +13,7 @@ import { Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-
 import HomeScreen from './src/screens/HomeScreen';
 import TrackingScreen from './src/screens/TrackingScreen';
 import ActivityScreen from './src/screens/ActivityScreen';
+import HistoryScreen from './src/screens/HistoryScreen';
 import ShareScreen from './src/screens/ShareScreen';
 import AccountScreen from './src/screens/AccountScreen';
 import { colors } from './src/theme';
@@ -20,6 +21,7 @@ import { colors } from './src/theme';
 export type RootStackParamList = {
   Home: undefined;
   Tracking: { sport: 'run' | 'walk' };
+  History: undefined;
   Activity: { id: string };
   Share: { id: string };
   Account: undefined;
@@ -49,6 +51,7 @@ export default function App() {
             component={TrackingScreen}
             options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
           />
+          <Stack.Screen name="History" component={HistoryScreen} options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="Activity" component={ActivityScreen} options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="Share" component={ShareScreen} options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="Account" component={AccountScreen} options={{ animation: 'slide_from_right' }} />
