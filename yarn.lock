@@ -1703,7 +1703,6 @@
     "@types/geojson" "^7946.0.10"
     tslib "^2.8.1"
 
-
 "@tybys/wasm-util@^0.10.3":
   version "0.10.4"
   resolved "https://registry.yarnpkg.com/@tybys/wasm-util/-/wasm-util-0.10.4.tgz#3e85ecb266f9d1722250e89bc69528615720b154"
@@ -3543,11 +3542,6 @@ expo-blur@~57.0.3:
   resolved "https://registry.npmjs.org/expo-blur/-/expo-blur-57.0.3.tgz"
   integrity sha512-uyBeJwxIuXzWXXNrnRub5pcF8VzQsiOz0VBTWDpMG2UztmaFyfAz6pI/GCwRtWpHhiOpLoJj79WLdg1GMB+9cg==
 
-expo-document-picker@~57.0.3:
-  version "57.0.3"
-  resolved "https://registry.npmjs.org/expo-document-picker/-/expo-document-picker-57.0.3.tgz"
-  integrity sha512-XlxdZ0zzv44JRD8O15DISgIO8FTaZ581oc4kQp6MJoR7vdahjcY+2qCuDt5k1J8/lc0YR+bXon/v81norciuxw==
-
 expo-constants@~57.0.21, expo-constants@~57.0.22:
   version "57.0.22"
   resolved "https://registry.yarnpkg.com/expo-constants/-/expo-constants-57.0.22.tgz#cdf2ac117fbb53996229ff8a64af53f8e916ea43"
@@ -3555,6 +3549,42 @@ expo-constants@~57.0.21, expo-constants@~57.0.22:
   dependencies:
     "@expo/env" "~2.4.3"
 
+expo-dev-client@~57.0.20:
+  version "57.0.20"
+  resolved "https://registry.yarnpkg.com/expo-dev-client/-/expo-dev-client-57.0.20.tgz#a679b0b4844ed7df1b5a3ee8f916d568683d97e4"
+  integrity sha512-ko5FzWsUPuG4aiQfmqxQA5yAdmal6SSICB70KJLChQYzWo+XDoTpXRgEpzQSr1Ku8KyKW0lkEa48xbnKSgd1xQ==
+  dependencies:
+    expo-dev-launcher "~57.0.21"
+    expo-dev-menu "~57.0.20"
+    expo-dev-menu-interface "~57.0.0"
+    expo-manifests "~57.0.2"
+    expo-updates-interface "~57.0.2"
+
+expo-dev-launcher@~57.0.21:
+  version "57.0.21"
+  resolved "https://registry.yarnpkg.com/expo-dev-launcher/-/expo-dev-launcher-57.0.21.tgz#5c8dd413f4a52c766f84defbd3baeb8060f18689"
+  integrity sha512-dXa1bhCEtSXn4y34rydBvArmoZtcLK7zY0FN3x1JFPTGh81OXUGZWhyzLCAI9nhI23L/MTy7cGCeNyeJmC1ITw==
+  dependencies:
+    "@expo/schema-utils" "^57.0.2"
+    expo-dev-menu "~57.0.20"
+    expo-manifests "~57.0.2"
+
+expo-dev-menu-interface@~57.0.0:
+  version "57.0.0"
+  resolved "https://registry.yarnpkg.com/expo-dev-menu-interface/-/expo-dev-menu-interface-57.0.0.tgz#23bd53c35d00cead3fd963a9bc3e2abf8c00467d"
+  integrity sha512-F47VdzOHYc19FhI/jBgctpO8a5UskTIxG6a1E5t3W5gF8VImuvBQffdXXfLHhsuCl7dS3v3U0R45cleeVXO1Zg==
+
+expo-dev-menu@~57.0.20:
+  version "57.0.20"
+  resolved "https://registry.yarnpkg.com/expo-dev-menu/-/expo-dev-menu-57.0.20.tgz#f5b7c78b58bf7f091a359349f90b040e358e91bb"
+  integrity sha512-xpf7Rkj++sBA285GqWVJTtl5j/TychD980GKqWA5lVFKM41+xUNmyPMOfO18heAKvX9i620ZHVoHiBGD+6pCdA==
+  dependencies:
+    expo-dev-menu-interface "~57.0.0"
+
+expo-document-picker@~57.0.3:
+  version "57.0.3"
+  resolved "https://registry.npmjs.org/expo-document-picker/-/expo-document-picker-57.0.3.tgz"
+  integrity sha512-XlxdZ0zzv44JRD8O15DISgIO8FTaZ581oc4kQp6MJoR7vdahjcY+2qCuDt5k1J8/lc0YR+bXon/v81norciuxw==
 
 expo-eas-client@~57.0.5:
   version "57.0.5"
@@ -5922,7 +5952,6 @@ quickselect@^3.0.0:
   version "3.0.0"
   resolved "https://registry.yarnpkg.com/quickselect/-/quickselect-3.0.0.tgz#a37fc953867d56f095a20ac71c6d27063d2de603"
   integrity sha512-XdjUArbK4Bm5fLLvlm5KpTFOiOThgfWWI4axAZDWg4E/0mKdZyI9tNEfds27qCi1ze/vwTR16kvmmGhRra3c2g==
-
 
 range-parser@~1.2.1:
   version "1.2.1"

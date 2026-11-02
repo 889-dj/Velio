@@ -8,10 +8,45 @@ export const MIN_STEP_M = 3; // ignore standstill jitter
 export const GAP_MS = 15000; // a longer hole starts a new line segment, never a straight line across it
 export const PACE_WINDOW_MS = 6000;
 export const DEFAULT_STRIDE_M = 0.75;
+export const STEP_BOUT = 10; // steps in a row before we believe the wearer is really walking
+export const STEP_BOUT_GAP_MS = 5000; // a pause longer than this ends the bout
 
 export type Fix = { latitude: number; longitude: number; accuracy: number | null; altitude: number | null; timestamp: number };
 export type Split = { km: number; ms: number };
 export type EngineState = 'idle' | 'running' | 'paused' | 'finished';
+
+/**
+ * Phone step counters fire on handling and fidgeting, and Android reports a step the moment you subscribe.
+ * Holds steps back until a sustained bout proves they are real, then lets them through (backlog included).
+ */
+export class StepGate {
+  private pending = 0;
+  private lastAt = 0;
+  private walking = false;
+
+  /** Returns how many steps to count now. */
+  add(delta: number, now: number): number {
+    if (delta <= 0) return 0;
+    if (now - this.lastAt > STEP_BOUT_GAP_MS) {
+      this.pending = 0;
+      this.walking = false;
+    }
+    this.lastAt = now;
+    if (this.walking) return delta;
+    this.pending += delta;
+    if (this.pending < STEP_BOUT) return 0;
+    this.walking = true;
+    const backlog = this.pending;
+    this.pending = 0;
+    return backlog;
+  }
+
+  reset() {
+    this.pending = 0;
+    this.lastAt = 0;
+    this.walking = false;
+  }
+}
 
 /**
  * The run maths with no React, GPS or timers in it. Fixes arrive from the foreground watcher or the

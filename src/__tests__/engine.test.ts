@@ -1,4 +1,4 @@
-import { RunEngine, Fix } from '../lib/engine';
+import { RunEngine, Fix, StepGate } from '../lib/engine';
 
 const T0 = 1_700_000_000_000;
 const M_PER_DEG = 111_195; // metres per degree of latitude on the engine's sphere
@@ -148,5 +148,38 @@ describe('RunEngine scenario', () => {
     e.ingestBatch(late);
     expect(e.segments).toHaveLength(1);
     expect(e.distance).toBeCloseTo(280, -1);
+  });
+});
+
+describe('StepGate', () => {
+  test('drops the phantom first step and short fidgets', () => {
+    const g = new StepGate();
+    expect(g.add(1, T0)).toBe(0);
+    for (let i = 1; i <= 5; i++) expect(g.add(1, T0 + 20_000 + i * 500)).toBe(0);
+    // a long pause: the fidget never turns into a walk
+    for (let i = 1; i <= 5; i++) expect(g.add(1, T0 + 60_000 + i * 500)).toBe(0);
+  });
+
+  test('a sustained walk counts in full, backlog included', () => {
+    const g = new StepGate();
+    let total = 0;
+    for (let i = 0; i < 30; i++) total += g.add(1, T0 + i * 500);
+    expect(total).toBe(30);
+  });
+
+  test('a late batch from the sensor counts straight away', () => {
+    expect(new StepGate().add(18, T0)).toBe(18);
+  });
+
+  test('stopping ends the bout, so standing still needs a new walk to count', () => {
+    const g = new StepGate();
+    for (let i = 0; i < 12; i++) g.add(1, T0 + i * 500);
+    expect(g.add(1, T0 + 60_000)).toBe(0);
+  });
+
+  test('zero and negative deltas are ignored', () => {
+    const g = new StepGate();
+    expect(g.add(0, T0)).toBe(0);
+    expect(g.add(-3, T0)).toBe(0);
   });
 });

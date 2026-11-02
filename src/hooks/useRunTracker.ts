@@ -3,7 +3,7 @@ import { AppState } from 'react-native';
 import * as Location from 'expo-location';
 import { Pedometer } from 'expo-sensors';
 import { Coord } from '../lib/geo';
-import { Fix, RunEngine, Split } from '../lib/engine';
+import { Fix, RunEngine, Split, StepGate } from '../lib/engine';
 import { Run, Sport, saveActive } from '../lib/storage';
 import {
   Access,
@@ -22,6 +22,7 @@ export type Gps = 'searching' | 'good' | 'weak' | 'lost';
 const GOOD_ACCURACY_M = 10;
 const GPS_LOST_MS = 6000; // no fix for this long = signal lost
 const AUTOSAVE_MS = 5000;
+const STEP_IDLE_MS = 5000; // no steps for this long = cadence is zero, not the last value
 
 /**
  * Tracks a run. The maths lives in RunEngine; this hook wires it to the sensors and to React. GPS comes from
@@ -56,8 +57,9 @@ export function useRunTracker() {
 
   const lastAnyFixAt = useRef(0);
   const lastAcc = useRef<number | null>(null);
-  const stepBase = useRef(0);
+  const stepGate = useRef(new StepGate());
   const lastWatchSteps = useRef(0);
+  const lastStepAt = useRef(0);
   const stepTrail = useRef<{ t: number; s: number }[]>([]);
   const lastCadenceAt = useRef(0);
   /** Screens set this to react to a completed km (toast, haptic) without an effect. */
@@ -81,6 +83,16 @@ export function useRunTracker() {
     accessRef.current = a;
     setAccess(a);
     setPermission(a === 'denied' ? 'denied' : 'granted');
+    // "Always" granted mid-run: hand GPS to the background task, or the run would still stop at the lock screen
+    if (a === 'always' && eng.current.state === 'running' && !usingBackground.current) {
+      usingBackground.current = true;
+      if (await startBackground()) {
+        locSub.current?.remove();
+        locSub.current = null;
+      } else {
+        usingBackground.current = false;
+      }
+    }
     return a;
   }, []);
 
@@ -127,6 +139,15 @@ export function useRunTracker() {
     return a;
   }, []);
 
+  /** The user asked to keep recording with the phone locked. */
+  const askAlways = useCallback(async () => {
+    if ((await requestAccess()) === 'while-using') {
+      // iOS can resolve the request before the user answers the "Always" upgrade prompt
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+    return refreshAccess();
+  }, [refreshAccess]);
+
   const checkpoint = useCallback(() => {
     const e = eng.current;
     if (!e.id || e.state === 'idle') return;
@@ -169,16 +190,21 @@ export function useRunTracker() {
         const perm = await Pedometer.requestPermissionsAsync();
         if (perm.granted) {
           lastWatchSteps.current = 0;
+          stepGate.current.reset();
           pedoSub.current = Pedometer.watchStepCount(({ steps: n }) => {
             const e = eng.current;
             if (e.state !== 'running') return;
             const delta = n - lastWatchSteps.current;
             lastWatchSteps.current = n;
-            const total = stepBase.current + n;
-            const lost = Date.now() - e.lastFixAt > GPS_LOST_MS;
-            const made = e.addSteps(total, delta, lost);
+            const now = Date.now();
+            const accepted = stepGate.current.add(delta, now);
+            if (!accepted) return;
+            lastStepAt.current = now;
+            const total = e.steps + accepted;
+            const lost = now - e.lastFixAt > GPS_LOST_MS;
+            const made = e.addSteps(total, accepted, lost);
             setSteps(total);
-            if (lost && delta > 0) {
+            if (lost) {
               setDistance(e.distance);
               if (made) {
                 setSplits(e.splits);
@@ -186,7 +212,6 @@ export function useRunTracker() {
               }
             }
 
-            const now = Date.now();
             stepTrail.current.push({ t: now, s: total });
             while (stepTrail.current.length > 1 && now - stepTrail.current[0].t > 30000) stepTrail.current.shift();
             const f = stepTrail.current[0];
@@ -213,7 +238,6 @@ export function useRunTracker() {
     if (usingBackground.current) stopBackground();
     usingBackground.current = false;
     setLocationSink(null);
-    stepBase.current = eng.current.steps;
     lastWatchSteps.current = 0;
   }, []);
 
@@ -224,6 +248,7 @@ export function useRunTracker() {
       const since = now - lastAnyFixAt.current;
       const a = lastAcc.current;
       setGps(since > GPS_LOST_MS ? 'lost' : a != null && a <= GOOD_ACCURACY_M ? 'good' : 'weak');
+      if (now - lastStepAt.current > STEP_IDLE_MS) setCadence(0);
       // keep the lock-screen banner honest if the user changes the permission mid-run
       if (accessRef.current !== 'always' && ++ticks.current % 6 === 0) refreshAccess();
     }, 500);
@@ -254,7 +279,7 @@ export function useRunTracker() {
   const start = useCallback(
     async (sport: Sport = 'run') => {
       const now = Date.now();
-      stepBase.current = 0;
+      lastStepAt.current = 0;
       stepTrail.current = [];
       lastCadenceAt.current = 0;
       lastAnyFixAt.current = now;
@@ -337,6 +362,7 @@ export function useRunTracker() {
     buildRun,
     setOnSplit,
     askPermission,
+    askAlways,
     refreshAccess,
   };
 }

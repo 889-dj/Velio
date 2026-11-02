@@ -34,6 +34,7 @@ export default function TrackingScreen({ navigation, route }: Props) {
   const [count, setCount] = useState<number | null>(null);
   const [toast, setToast] = useState<{ km: number; ms: number } | null>(null);
   const [explainer, setExplainer] = useState(false);
+  const [lockBannerHidden, setLockBannerHidden] = useState(false);
 
   const last = t.segments.length ? t.segments[t.segments.length - 1] : [];
   const head = last.length ? last[last.length - 1] : null;
@@ -142,6 +143,20 @@ export default function TrackingScreen({ navigation, route }: Props) {
     const a = await t.askPermission();
     if (a === 'denied') return needLocation();
     countdownThenStart();
+  };
+
+  const keepRecordingLocked = async () => {
+    if ((await t.askAlways()) === 'always') return;
+    Alert.alert(
+      'Keep recording when locked',
+      Platform.OS === 'ios'
+        ? 'In Settings, tap Location and choose Always.'
+        : 'In Settings, tap Permissions, then Location, and choose Allow all the time.',
+      [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'Open Settings', onPress: () => openSettings() },
+      ],
+    );
   };
 
   const close = () => {
@@ -262,12 +277,15 @@ export default function TrackingScreen({ navigation, route }: Props) {
           </Animated.View>
         )}
 
-        {(running || paused) && t.access !== 'always' && (
+        {(running || paused) && t.access !== 'always' && !lockBannerHidden && (
           <Animated.View entering={FadeInDown} exiting={FadeOut} style={s.lost}>
             <Ionicons name="lock-closed" size={16} color={colors.amber} />
-            <Text style={[s.lostTxt, { flexShrink: 1 }]}>Tracking may pause when your screen locks</Text>
-            <Pressable onPress={() => openSettings()} hitSlop={8} accessibilityRole="button">
-              <Text style={s.bannerLink}>Open Settings</Text>
+            <Text style={[s.lostTxt, { flexShrink: 1 }]}>Recording may stop when your phone locks</Text>
+            <Pressable onPress={keepRecordingLocked} hitSlop={8} accessibilityRole="button">
+              <Text style={s.bannerLink}>Fix</Text>
+            </Pressable>
+            <Pressable onPress={() => setLockBannerHidden(true)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Dismiss">
+              <Ionicons name="close" size={16} color={colors.mute} />
             </Pressable>
           </Animated.View>
         )}
