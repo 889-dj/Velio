@@ -1,3 +1,5 @@
+import { paceToUnit } from './units';
+
 export type Coord = { latitude: number; longitude: number };
 
 const R = 6371000;
@@ -23,14 +25,12 @@ export function formatDuration(ms: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-export function formatKm(meters: number): string {
-  return (meters / 1000).toFixed(2);
-}
-
-/** Pace in seconds per km -> "5:32". */
+/** Pace given in seconds per km, shown per the chosen unit: "5:32". */
 export function formatPace(secPerKm: number | null): string {
   if (secPerKm == null || !isFinite(secPerKm) || secPerKm <= 0 || secPerKm > 3600) return '--:--';
-  const m = Math.floor(secPerKm / 60);
-  const s = Math.round(secPerKm % 60);
+  const p = paceToUnit(secPerKm);
+  if (p > 3600) return '--:--';
+  const m = Math.floor(p / 60);
+  const s = Math.round(p % 60);
   return `${m}:${String(s === 60 ? 59 : s).padStart(2, '0')}`;
 }

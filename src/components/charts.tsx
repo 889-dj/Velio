@@ -14,6 +14,7 @@ import * as Haptics from 'expo-haptics';
 import { colors, font, label } from '../theme';
 import type { Pt, SplitRow } from '../lib/insights';
 import { formatPace } from '../lib/geo';
+import { paceToUnit, unitLabel, unitMeters, useUnits } from '../lib/units';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
@@ -30,6 +31,7 @@ type LineProps = {
   /** Formats a y value for the readout and the axis labels. */
   fmtY: (v: number) => string;
   unit?: string;
+  /** Called with the scrub position in km (the data's x unit), whatever unit is displayed. */
   onScrub?: (km: number | null) => void;
   /** Force the y-axis to include this value (e.g. 0). */
   includeY?: number;
@@ -42,6 +44,8 @@ const PAD = { l: 8, r: 8, t: 16, b: 22 };
 export const LineChart = memo(function LineChart(p: LineProps) {
   const { data, width, height = 150, color = colors.accent, fill, invertY, avg, fmtY, onScrub, includeY, delay = 250 } = p;
   const reduce = useReducedMotion();
+  useUnits(); // axis and readout follow the chosen unit
+  const perUnit = unitMeters() / 1000; // km per display unit
   const [cursor, setCursor] = useState<number | null>(null);
 
   const geo = useMemo(() => {
@@ -84,14 +88,14 @@ export const LineChart = memo(function LineChart(p: LineProps) {
   const fillProps = useAnimatedProps(() => ({ opacity: prog.value }));
 
   // pan handlers live in a ref, so they read the latest props through this mirror
-  const live = useRef({ geo, data, onScrub });
+  const live = useRef({ geo, data, onScrub, perUnit });
   useEffect(() => {
-    live.current = { geo, data, onScrub };
+    live.current = { geo, data, onScrub, perUnit };
   });
   const lastKm = useRef(-1);
 
   const setFromX = (x: number) => {
-    const { geo: g, data: d, onScrub: cb } = live.current;
+    const { geo: g, data: d, onScrub: cb, perUnit: pu } = live.current;
     if (!g) return;
     let best = 0;
     let bd = Infinity;
@@ -104,7 +108,7 @@ export const LineChart = memo(function LineChart(p: LineProps) {
     }
     setCursor(best);
     cb?.(d[best].x);
-    const km = Math.floor(d[best].x);
+    const km = Math.floor(d[best].x / pu);
     if (km !== lastKm.current) {
       lastKm.current = km;
       Haptics.selectionAsync();
@@ -141,7 +145,7 @@ export const LineChart = memo(function LineChart(p: LineProps) {
       <View style={s.head}>
         <Text style={label}>{p.title}</Text>
         <Text style={s.readout}>
-          {cur ? `${fmtY(cur.y)}${p.unit ? ` ${p.unit}` : ''} · ${cur.x.toFixed(2)} km` : avg != null ? `avg ${fmtY(avg)}${p.unit ? ` ${p.unit}` : ''}` : ' '}
+          {cur ? `${fmtY(cur.y)}${p.unit ? ` ${p.unit}` : ''} · ${(cur.x / perUnit).toFixed(2)} ${unitLabel()}` : avg != null ? `avg ${fmtY(avg)}${p.unit ? ` ${p.unit}` : ''}` : ' '}
         </Text>
       </View>
       <View {...pan.panHandlers} style={{ width, height }}>
@@ -170,10 +174,10 @@ export const LineChart = memo(function LineChart(p: LineProps) {
             animatedProps={lineProps}
           />
           <SvgText x={PAD.l} y={height - 6} fill={colors.mute} fontSize={10} fontFamily={font.t500}>
-            {geo.x0.toFixed(1)} km
+            {(geo.x0 / perUnit).toFixed(1)} {unitLabel()}
           </SvgText>
           <SvgText x={width - PAD.r} y={height - 6} fill={colors.mute} fontSize={10} fontFamily={font.t500} textAnchor="end">
-            {geo.x1.toFixed(1)} km
+            {(geo.x1 / perUnit).toFixed(1)} {unitLabel()}
           </SvgText>
           {cursor != null && (
             <>
@@ -194,7 +198,7 @@ type BarsProps = {
   onSelect: (km: number | null) => void;
 };
 
-/** Per-km split bars. Bar length is speed from zero (never truncated); the dashed tick is your average. */
+/** Per-split bars (km or mile). Bar length is speed from zero (never truncated); the dashed tick is your average. */
 export function SplitBars({ rows, avgPace, selected, onSelect }: BarsProps) {
   const reduce = useReducedMotion();
   const speeds = rows.map((r) => 3600 / r.pace);
@@ -255,10 +259,10 @@ function Row({
     w.value = reduce ? len : withDelay(250 + index * 70, withTiming(len, { duration: 650, easing: Easing.out(Easing.cubic) }));
   }, [w, len, index, reduce]);
   const bar = useAnimatedStyle(() => ({ width: `${w.value * 100}%` }));
-  const d = Math.round(row.delta);
+  const d = Math.round(paceToUnit(row.delta));
   return (
     <Pressable onPress={onPress} style={[s.row, active && s.rowOn, dim && { opacity: 0.45 }]}>
-      <Text style={s.km}>{row.partial ? `${(row.dist / 1000).toFixed(2)}` : row.km}</Text>
+      <Text style={s.km}>{row.partial ? `${(row.dist / row.unitM).toFixed(2)}` : row.km}</Text>
       <View style={s.track}>
         <Animated.View style={[s.bar, { backgroundColor: TONE[tone] }, bar]} />
         <View style={[s.avgTick, { left: `${avgPos * 100}%` }]} />

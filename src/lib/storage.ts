@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Coord } from './geo';
+import { Units, defaultUnits } from './units';
 
 export type Sport = 'run' | 'walk';
 
@@ -12,15 +13,17 @@ export type Run = {
   elapsed: number; // moving ms
   steps: number;
   segments: Coord[][];
+  /** Each split is `splitM` metres long (1000 when absent: runs recorded before the units option). `km` is the split's number. */
   splits: { km: number; ms: number }[];
+  splitM?: number;
   /** Per accepted GPS fix: [moving ms, cumulative metres, altitude m | null]. Absent on older runs. */
   track?: [number, number, number | null][];
   /** Cadence samples: [moving ms, steps per minute]. Absent on older runs or without a pedometer. */
   cadence?: [number, number][];
 };
 
-const RUNS = 'runs:v1';
-export const RUNS_KEY = RUNS;
+/** The old single-list key. Only read once, to move existing runs into per-run files. */
+export const LEGACY_RUNS_KEY = 'runs:v1';
 const ACTIVE = 'run:active:v1';
 
 const round = (c: Coord): Coord => ({
@@ -38,20 +41,83 @@ async function read<T>(key: string, fallback: T): Promise<T> {
   }
 }
 
+// ---------- run storage: one file per run ----------
+export interface RunStore {
+  readAll(): Promise<Run[]>;
+  write(run: Run): Promise<void>;
+  remove(id: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
+let store: RunStore | null = null;
+/** Swap the backing store (tests use an in-memory one). */
+export function setRunStore(next: RunStore | null) {
+  store = next;
+  cache = null;
+  migrated = null;
+}
+function backing(): RunStore {
+  // required lazily so importing this module never touches the native file system
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return (store ??= require('./runFiles').fileRunStore as RunStore);
+}
+
+let cache: Map<string, Run> | null = null;
+let migrated: Promise<void> | null = null;
+
+/** Moves runs from the old AsyncStorage list into files. The old list is only deleted once every run reads back. */
+async function migrateLegacy() {
+  const legacy = await read<unknown>(LEGACY_RUNS_KEY, null);
+  if (!Array.isArray(legacy)) return;
+  if (legacy.length === 0) {
+    await AsyncStorage.removeItem(LEGACY_RUNS_KEY).catch(() => {});
+    return;
+  }
+  const runs = legacy as Run[];
+  const have = new Set((await backing().readAll()).map((r) => r.id));
+  for (const r of runs) if (r && typeof r.id === 'string' && !have.has(r.id)) await backing().write(pack(r));
+  const after = new Set((await backing().readAll()).map((r) => r.id));
+  if (runs.every((r) => r && after.has(r.id))) await AsyncStorage.removeItem(LEGACY_RUNS_KEY);
+}
+
+async function ready() {
+  if (!migrated) migrated = migrateLegacy().catch(() => {});
+  await migrated;
+  if (!cache) {
+    const all = await backing().readAll();
+    // if migration could not finish, the old list still holds runs: show them too rather than hide them
+    const legacy = await read<Run[]>(LEGACY_RUNS_KEY, []);
+    cache = new Map([...(Array.isArray(legacy) ? legacy : []), ...all].map((r) => [r.id, r] as const));
+  }
+  return cache;
+}
+
 export async function loadRuns(): Promise<Run[]> {
-  const runs = await read<Run[]>(RUNS, []);
-  return runs.sort((a, b) => b.startedAt - a.startedAt);
+  const map = await ready();
+  return [...map.values()].sort((a, b) => b.startedAt - a.startedAt);
 }
 
 export async function saveRun(run: Run) {
-  const runs = await read<Run[]>(RUNS, []);
-  const next = [pack(run), ...runs.filter((r) => r.id !== run.id)];
-  await AsyncStorage.setItem(RUNS, JSON.stringify(next));
+  const map = await ready();
+  const packed = pack(run);
+  await backing().write(packed);
+  map.set(packed.id, packed);
+}
+
+/** Saves several runs (used by restore). Stops at the first failure, keeping what was already written. */
+export async function saveRuns(runs: Run[]) {
+  for (const r of runs) await saveRun(r);
 }
 
 export async function deleteRun(id: string) {
-  const runs = await read<Run[]>(RUNS, []);
-  await AsyncStorage.setItem(RUNS, JSON.stringify(runs.filter((r) => r.id !== id)));
+  const map = await ready();
+  await backing().remove(id);
+  map.delete(id);
+  // a run still sitting in the un-migrated legacy list would otherwise come back
+  const legacy = await read<Run[]>(LEGACY_RUNS_KEY, []);
+  if (Array.isArray(legacy) && legacy.some((r) => r.id === id)) {
+    await AsyncStorage.setItem(LEGACY_RUNS_KEY, JSON.stringify(legacy.filter((r) => r.id !== id)));
+  }
 }
 
 /** In-progress checkpoint, written every few seconds so a crash never loses a run. */
@@ -96,6 +162,8 @@ export type Profile = {
   weeklyGoalKm: number;
   /** Default for the "Hide start and finish" switch on the share screen. */
   hideEnds: boolean;
+  /** Distance and pace units shown everywhere. Stored data is always metres. */
+  units: Units;
   /** First launch of the account screen, shown as "Member since". */
   since: number;
 };
@@ -109,6 +177,7 @@ export async function loadProfile(): Promise<Profile> {
     name: typeof p?.name === 'string' ? p.name : '',
     weeklyGoalKm: goal && goal >= 1 && goal <= 500 ? goal : DEFAULT_GOAL_KM,
     hideEnds: p?.hideEnds ?? true,
+    units: p?.units === 'mi' || p?.units === 'km' ? p.units : defaultUnits(),
     since: p?.since ?? Date.now(),
   };
   if (!p?.since) await saveProfile(profile); // pin "member since" to the first load
@@ -128,5 +197,7 @@ export async function exportAll() {
 
 /** Wipes runs, the in-progress checkpoint, profile and weight. */
 export async function clearEverything() {
-  await AsyncStorage.multiRemove([RUNS, ACTIVE, PROFILE, WEIGHT, EXPLAINED]);
+  await AsyncStorage.multiRemove([LEGACY_RUNS_KEY, ACTIVE, PROFILE, WEIGHT, EXPLAINED]);
+  await backing().clear();
+  cache = null;
 }

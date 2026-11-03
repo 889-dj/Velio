@@ -4,6 +4,7 @@ import Svg, { Circle, Defs, Line, LinearGradient, Polyline, RadialGradient, Rect
 import { colors, font } from '../theme';
 import { Digits } from './Digits';
 import { formatDuration, formatPace } from '../lib/geo';
+import { toUnit, unitLabel } from '../lib/units';
 import { CANVAS, ROUTE_BOX, T, Path, buildPath, easeInOutCubic, seg, slicePath, toPoints } from '../lib/share';
 import type { Coord } from '../lib/geo';
 
@@ -39,7 +40,7 @@ export const ShareCanvas = memo(function ShareCanvas({ data, opts, p }: { data: 
   const head = trail.length ? trail[trail.length - 1] : path.pts[0];
   const pulse = done ? 0.5 + 0.5 * Math.sin((p - T.draw[1]) * 60) : 1;
 
-  const km = (data.distance * draw) / 1000;
+  const km = toUnit(data.distance * draw);
   const stats = [
     opts.showTime && { k: 'Time', v: formatDuration(data.elapsed * draw), show: 1 },
     opts.showPace && { k: 'Avg pace', v: formatPace(data.avgPace), show: outro },
@@ -97,7 +98,7 @@ export const ShareCanvas = memo(function ShareCanvas({ data, opts, p }: { data: 
       {/* big distance */}
       <View style={s.distance}>
         <Digits value={km.toFixed(2)} size={92} />
-        <Text style={s.unit}>KILOMETERS</Text>
+        <Text style={s.unit}>{unitLabel() === 'km' ? 'KILOMETRES' : 'MILES'}</Text>
       </View>
 
       {/* secondary stats */}

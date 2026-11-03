@@ -20,7 +20,8 @@ import { Digits, emWidth, fitSize } from '../components/Digits';
 import { RoutePreview } from '../components/RoutePreview';
 import { RouteThumb } from '../components/RouteThumb';
 import { Run, deleteRun, loadRuns, saveRun } from '../lib/storage';
-import { formatDuration, formatKm, formatPace } from '../lib/geo';
+import { formatDuration, formatPace } from '../lib/geo';
+import { formatDist, unitLabel, unitName, useUnits } from '../lib/units';
 import { titleOf, whenOf } from '../lib/format';
 import {
   Bar,
@@ -63,6 +64,7 @@ const monthYear = (year: number, month: number) =>
 const activities = (n: number) => `${n} ${n === 1 ? 'activity' : 'activities'}`;
 
 export default function HistoryScreen({ navigation }: Props) {
+  useUnits(); // re-render if the unit changes
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const reduce = useReducedMotion();
@@ -187,7 +189,7 @@ export default function HistoryScreen({ navigation }: Props) {
         <View style={s.sectionHead}>
           <Text style={s.sectionTitle}>{monthYear(section.year, section.month)}</Text>
           <Text style={s.sectionSub}>
-            {activities(section.totals.count)} · {formatKm(section.totals.distance)} km
+            {activities(section.totals.count)} · {formatDist(section.totals.distance)} {unitLabel()}
           </Text>
         </View>
       ) : null,
@@ -213,8 +215,8 @@ export default function HistoryScreen({ navigation }: Props) {
       <View style={s.hero}>
         <Text style={label}>{scope}</Text>
         <View style={s.heroBig}>
-          <Digits value={formatKm(totals.distance)} size={64} />
-          <Text style={s.heroUnit}>km</Text>
+          <Digits value={formatDist(totals.distance)} size={64} />
+          <Text style={s.heroUnit}>{unitLabel()}</Text>
         </View>
         <View style={s.heroStats}>
           {[
@@ -275,7 +277,7 @@ export default function HistoryScreen({ navigation }: Props) {
       </ScrollView>
 
       {sort === 'fastest' && sections.length > 0 && (
-        <Text style={s.note}>Ranks activities of {MIN_RANKED_M / 1000} km or more</Text>
+        <Text style={s.note}>Ranks activities of {formatDist(MIN_RANKED_M, 1)} {unitLabel()} or more</Text>
       )}
     </View>
   );
@@ -322,7 +324,7 @@ export default function HistoryScreen({ navigation }: Props) {
             ListEmptyComponent={
               <View style={s.none}>
                 <Ionicons name="search-outline" size={24} color={colors.dim} />
-                <Text style={s.noneTitle}>{sort === 'fastest' && scoped.length > 0 ? `Nothing of ${MIN_RANKED_M / 1000} km or more yet` : `No ${noun} in ${scope}`}</Text>
+                <Text style={s.noneTitle}>{sort === 'fastest' && scoped.length > 0 ? `Nothing of ${formatDist(MIN_RANKED_M, 1)} ${unitLabel()} or more yet` : `No ${noun} in ${scope}`}</Text>
                 {filtered && (
                   <Pressable onPress={clearFilters} style={s.noneBtn} accessibilityRole="button">
                     <Text style={s.noneBtnTxt}>Show everything</Text>
@@ -401,7 +403,7 @@ function PeriodBar({
       style={s.barCol}
       accessibilityRole="button"
       accessibilityState={{ selected: on, disabled: empty }}
-      accessibilityLabel={`${a11y}, ${formatKm(bar.value)} kilometres`}
+      accessibilityLabel={`${a11y}, ${formatDist(bar.value)} ${unitName()}`}
     >
       <View style={s.barTrack}>
         <Animated.View style={[s.barFill, dim && { opacity: 0.28 }, fill]} />
@@ -432,7 +434,7 @@ const Row = memo(function Row({
           onPress={() => onOpen(run.id)}
           style={({ pressed }) => [s.rowMain, pressed && { transform: [{ scale: 0.98 }] }]}
           accessibilityRole="button"
-          accessibilityLabel={`${titleOf(run)}, ${whenOf(run.startedAt)}, ${formatKm(run.distance)} kilometres`}
+          accessibilityLabel={`${titleOf(run)}, ${whenOf(run.startedAt)}, ${formatDist(run.distance)} ${unitName()}`}
         >
           <RouteThumb segments={run.segments} size={68} />
           <View style={{ flex: 1 }}>
@@ -452,13 +454,13 @@ const Row = memo(function Row({
             </Text>
             <View style={s.rowStats}>
               <Text style={s.rowBig}>
-                {formatKm(run.distance)}
-                <Text style={s.rowUnit}> km</Text>
+                {formatDist(run.distance)}
+                <Text style={s.rowUnit}> {unitLabel()}</Text>
               </Text>
               <Text style={s.rowMid}>{formatDuration(run.elapsed)}</Text>
               <Text style={s.rowMid}>
                 {formatPace(pace)}
-                <Text style={s.rowUnit}> /km</Text>
+                <Text style={s.rowUnit}> /{unitLabel()}</Text>
               </Text>
             </View>
           </View>

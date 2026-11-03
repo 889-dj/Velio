@@ -5,10 +5,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Sharing from 'expo-sharing';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../App';
 import { colors, font, label, radius } from '../theme';
+import { useAnim } from '../lib/motion';
 import { Run, loadProfile, loadRuns } from '../lib/storage';
 import { titleOf, whenOf } from '../lib/format';
 import { avgPaceOf, elevationOf } from '../lib/insights';
@@ -27,6 +28,7 @@ export default function ShareScreen({ navigation, route }: Props) {
   const abort = useRef<AbortController | null>(null);
   const cache = useRef<{ sig: string; uri: string } | null>(null);
   const hasVideo = recorderAvailable();
+  const m = useAnim();
 
   const [run, setRun] = useState<Run | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'missing'>('loading');
@@ -153,7 +155,7 @@ export default function ShareScreen({ navigation, route }: Props) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await Sharing.shareAsync(uri, hasVideo
         ? { mimeType: 'video/mp4', UTI: 'public.mpeg-4', dialogTitle: 'Share your run' }
-        : { mimeType: 'image/png', UTI: 'public.png', dialogTitle: 'Share your run' });
+        : { mimeType: 'image/jpeg', UTI: 'public.jpeg', dialogTitle: 'Share your run' });
     } catch (e) {
       fail(e);
     }
@@ -187,86 +189,64 @@ export default function ShareScreen({ navigation, route }: Props) {
     <View style={s.root}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 140 }}>
         <View style={s.header}>
-          <Pressable onPress={() => navigation.goBack()} hitSlop={10} style={s.round}>
+          <Pressable onPress={() => navigation.goBack()} hitSlop={10} style={s.round} accessibilityRole="button" accessibilityLabel="Back">
             <Ionicons name="chevron-back" size={20} color={colors.text} />
           </Pressable>
-          <Text style={s.headerTitle}>Share</Text>
-          <View style={{ width: 44 }} />
+          <Text style={s.headerTitle} accessibilityRole="header">Share</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Pressable onPress={replay} disabled={!!busy} hitSlop={6} style={s.round} accessibilityRole="button" accessibilityLabel="Replay preview">
+              <Ionicons name="refresh" size={18} color={colors.text} />
+            </Pressable>
+            <Pressable onPress={togglePlay} disabled={!!busy} hitSlop={6} style={s.round} accessibilityRole="button" accessibilityLabel={playing ? 'Pause preview' : 'Play preview'}>
+              <Ionicons name={playing ? 'pause' : 'play'} size={18} color={colors.text} />
+            </Pressable>
+          </View>
         </View>
 
-        {/* preview, centred; this exact view is what gets recorded */}
+        {/* the privacy switch sits above the preview so it is never below the fold */}
+        <View style={s.privacyRow}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={s.rowTitle}>Hide start and finish</Text>
+            <Text style={s.rowSub}>
+              {trimmed.tooShort
+                ? `Route is under ${MIN_TRIM_TOTAL_M} m, too short to trim.`
+                : `Cuts the first and last ${TRIM_M} m so your home isn’t shown.`}
+            </Text>
+          </View>
+          <Switch
+            value={trim && !trimmed.tooShort}
+            disabled={trimmed.tooShort}
+            onValueChange={(v) => {
+              Haptics.selectionAsync();
+              setTrim(v);
+            }}
+            accessibilityLabel="Hide start and finish"
+            trackColor={{ false: colors.surface2, true: colors.accent }}
+            thumbColor="#fff"
+          />
+        </View>
+
+        {/* preview, centred; this exact view is what gets recorded. Nothing is drawn over it:
+            on Android the recorder copies window pixels, so an overlay would end up in the video. */}
         <View style={s.stageWrap}>
-          <View style={s.stageFrame}>
+          <View style={s.stageFrame} accessible accessibilityLabel={`Preview of your route video for ${data.title}`}>
             <Pressable onPress={togglePlay} disabled={!!busy} style={{ width: CANVAS.w, height: CANVAS.h }}>
               <ShareStage ref={stage} data={data} opts={opts} p={p} />
             </Pressable>
-            {busy && (
-              <Animated.View entering={FadeIn} exiting={FadeOut} style={s.busy} pointerEvents="auto">
-                <ActivityIndicator color={colors.accent} />
-                <Text style={s.busyTitle}>{busyLabel}</Text>
-                {busy.kind !== 'still' && (
-                  <>
-                    <View style={s.busyTrack}>
-                      <View style={[s.busyFill, { width: `${Math.round(busy.progress * 100)}%` }]} />
-                    </View>
-                    <Text style={s.busySub}>{Math.round(busy.progress * 100)}%</Text>
-                  </>
-                )}
-                {hasVideo && (
-                  <Pressable onPress={() => abort.current?.abort()} style={s.cancel}>
-                    <Text style={s.cancelTxt}>Cancel</Text>
-                  </Pressable>
-                )}
-              </Animated.View>
-            )}
           </View>
-
-          <View style={s.controls}>
-            <Pressable onPress={togglePlay} disabled={!!busy} hitSlop={8} style={s.ctl}>
-              <Ionicons name={playing ? 'pause' : 'play'} size={18} color={colors.text} />
-            </Pressable>
-            <View style={s.bar}>
-              <View style={[s.barFill, { width: `${p * 100}%` }]} />
-            </View>
-            <Pressable onPress={replay} disabled={!!busy} hitSlop={8} style={s.ctl}>
-              <Ionicons name="refresh" size={18} color={colors.text} />
-            </Pressable>
+          <View style={s.bar}>
+            <View style={[s.barFill, { width: `${p * 100}%` }]} />
           </View>
         </View>
 
         {!hasVideo && (
-          <Animated.View entering={FadeInDown} style={[s.card, s.callout]}>
+          <Animated.View entering={m(FadeInDown)} style={[s.card, s.callout]}>
             <Ionicons name="information-circle" size={20} color={colors.amber} />
             <Text style={s.calloutTxt}>
-              Video export needs a development build. In Expo Go you can still share a still image of the finished route card.
+              Video isn’t available on this device, so we’ll share a still image of your finished route card instead.
             </Text>
           </Animated.View>
         )}
-
-        {/* privacy */}
-        <View style={s.card}>
-          <Text style={label}>Privacy</Text>
-          <View style={s.switchRow}>
-            <View style={{ flex: 1, paddingRight: 12 }}>
-              <Text style={s.rowTitle}>Hide start and finish</Text>
-              <Text style={s.rowSub}>
-                {trimmed.tooShort
-                  ? `This route is under ${MIN_TRIM_TOTAL_M} m, too short to hide the start without losing the route.`
-                  : `Cuts the first and last ${TRIM_M} m so your home isn’t shown. Applies to this video only.`}
-              </Text>
-            </View>
-            <Switch
-              value={trim && !trimmed.tooShort}
-              disabled={trimmed.tooShort}
-              onValueChange={(v) => {
-                Haptics.selectionAsync();
-                setTrim(v);
-              }}
-              trackColor={{ false: colors.surface2, true: colors.accent }}
-              thumbColor="#fff"
-            />
-          </View>
-        </View>
 
         {/* stats */}
         <View style={s.card}>
@@ -289,10 +269,34 @@ export default function ShareScreen({ navigation, route }: Props) {
 
       {/* actions in the thumb zone */}
       <LinearGradient colors={['rgba(11,11,12,0)', colors.bg, colors.bg]} style={[s.footer, { paddingBottom: insets.bottom + 14 }]} pointerEvents="box-none">
-        <Pressable onPress={share} disabled={!!busy} style={({ pressed }) => [s.primary, { flex: 1 }, (pressed || busy) && { opacity: 0.7 }]}>
-          <Ionicons name="share-outline" size={22} color={colors.onAccent} />
-          <Text style={s.primaryTxt}>{hasVideo ? 'Share video' : 'Share image'}</Text>
-        </Pressable>
+        {busy ? (
+          <View style={s.busyBar} accessibilityLiveRegion="polite" accessible accessibilityLabel={`${busyLabel}${busy.kind !== 'still' ? `, ${Math.round(busy.progress * 100)} percent` : ''}`}>
+            <ActivityIndicator color={colors.accent} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.busyTitle}>{busyLabel}{busy.kind !== 'still' ? ` · ${Math.round(busy.progress * 100)}%` : ''}</Text>
+              {busy.kind !== 'still' && (
+                <View style={s.busyTrack}>
+                  <View style={[s.busyFill, { width: `${Math.round(busy.progress * 100)}%` }]} />
+                </View>
+              )}
+            </View>
+            {hasVideo && (
+              <Pressable onPress={() => abort.current?.abort()} style={s.cancel} accessibilityRole="button" accessibilityLabel="Cancel">
+                <Text style={s.cancelTxt}>Cancel</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : (
+          <Pressable
+            onPress={share}
+            style={({ pressed }) => [s.primary, { flex: 1 }, pressed && { opacity: 0.7 }]}
+            accessibilityRole="button"
+            accessibilityLabel={hasVideo ? 'Share video' : 'Share image'}
+          >
+            <Ionicons name="share-outline" size={22} color={colors.onAccent} />
+            <Text style={s.primaryTxt}>{hasVideo ? 'Share video' : 'Share image'}</Text>
+          </Pressable>
+        )}
       </LinearGradient>
     </View>
   );
@@ -306,6 +310,9 @@ function Chip({ text, on, onPress }: { text: string; on: boolean; onPress: () =>
         onPress();
       }}
       style={[s.chip, on && s.chipOn]}
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked: on }}
+      accessibilityLabel={`Show ${text.toLowerCase()} on video`}
     >
       {on && <Ionicons name="checkmark" size={14} color={colors.onAccent} />}
       <Text style={[s.chipTxt, on && { color: colors.onAccent }]}>{text}</Text>
@@ -323,17 +330,15 @@ const s = StyleSheet.create({
 
   stageWrap: { alignItems: 'center' },
   stageFrame: { width: CANVAS.w, height: CANVAS.h, borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: colors.hairline },
-  busy: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(11,11,12,0.86)', alignItems: 'center', justifyContent: 'center', gap: 10 },
-  busyTitle: { color: colors.text, fontFamily: font.t700, fontSize: 16, marginTop: 6 },
-  busyTrack: { width: 200, height: 6, borderRadius: 3, backgroundColor: colors.surface2, overflow: 'hidden' },
+  busyBar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.surface, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.hairline, paddingVertical: 12, paddingHorizontal: 18 },
+  busyTitle: { color: colors.text, fontFamily: font.t700, fontSize: 14 },
+  busyTrack: { height: 6, borderRadius: 3, backgroundColor: colors.surface2, overflow: 'hidden', marginTop: 8 },
   busyFill: { height: '100%', backgroundColor: colors.accent, borderRadius: 3 },
-  busySub: { color: colors.mute, fontFamily: font.t600, fontSize: 13 },
-  cancel: { marginTop: 10, height: 40, paddingHorizontal: 22, borderRadius: radius.pill, backgroundColor: colors.surface2, alignItems: 'center', justifyContent: 'center' },
+  cancel: { minHeight: 44, paddingHorizontal: 22, borderRadius: radius.pill, backgroundColor: colors.surface2, alignItems: 'center', justifyContent: 'center' },
   cancelTxt: { color: colors.text, fontFamily: font.t600, fontSize: 14 },
 
-  controls: { width: CANVAS.w, flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12 },
-  ctl: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },
-  bar: { flex: 1, height: 4, borderRadius: 2, backgroundColor: colors.surface2, overflow: 'hidden' },
+  privacyRow: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, marginBottom: 12, paddingVertical: 10, paddingHorizontal: 16, backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.hairline },
+  bar: { width: CANVAS.w, marginTop: 12, height: 4, borderRadius: 2, backgroundColor: colors.surface2, overflow: 'hidden' },
   barFill: { height: '100%', backgroundColor: colors.accent },
 
   card: { marginHorizontal: 20, marginTop: 14, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.hairline, padding: 16 },
@@ -343,7 +348,7 @@ const s = StyleSheet.create({
   rowTitle: { color: colors.text, fontFamily: font.t600, fontSize: 15 },
   rowSub: { color: colors.mute, fontFamily: font.t500, fontSize: 12, lineHeight: 17, marginTop: 3 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12, marginBottom: 10 },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 40, paddingHorizontal: 16, borderRadius: radius.pill, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.hairline },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 44, paddingHorizontal: 16, borderRadius: radius.pill, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.hairline },
   chipOn: { backgroundColor: colors.accent, borderColor: colors.accent },
   chipTxt: { color: colors.mute, fontFamily: font.t600, fontSize: 14 },
 

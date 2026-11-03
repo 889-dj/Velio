@@ -13,12 +13,15 @@ export function HoldButton({
   duration = 1100,
   color = colors.danger,
   onComplete,
+  label = 'Finish activity',
   children,
 }: {
   size?: number;
   duration?: number;
   color?: string;
   onComplete: () => void;
+  /** Spoken name of the button. */
+  label?: string;
   children: ReactNode;
 }) {
   const stroke = 4;
@@ -46,7 +49,18 @@ export function HoldButton({
   };
 
   return (
-    <Pressable onPressIn={down} onPressOut={up} style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+    <Pressable
+      onPressIn={down}
+      onPressOut={up}
+      style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint="Press and hold for about one second. With a screen reader, use the activate action."
+      accessibilityActions={[{ name: 'longpress', label }]}
+      onAccessibilityAction={(e) => {
+        if (e.nativeEvent.actionName === 'longpress') onComplete();
+      }}
+    >
       <Svg width={size} height={size} style={[StyleSheet.absoluteFill, { transform: [{ rotate: '-90deg' }] }]}>
         <Circle cx={size / 2} cy={size / 2} r={r} stroke={colors.hairline} strokeWidth={stroke} fill={colors.surface2} />
         <AnimatedCircle

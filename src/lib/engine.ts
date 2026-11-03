@@ -77,6 +77,8 @@ export class RunEngine {
   currentPace: number | null = null;
   lastAccepted: { c: Coord; t: number } | null = null;
   lastFixAt = 0; // wall time of last accepted fix (for GPS-lost checks)
+  /** Metres per split: 1000 for km, 1609.344 for miles. Fixed for the whole run. */
+  splitM = 1000;
 
   private accMs = 0;
   private resumedAt = 0;
@@ -93,8 +95,9 @@ export class RunEngine {
     return this.accMs + (this.state === 'running' ? Math.max(0, now - this.resumedAt) : 0);
   }
 
-  start(now: number, sport: Sport = 'run', id = `${now}`) {
+  start(now: number, sport: Sport = 'run', id = `${now}`, splitM = 1000) {
     Object.assign(this, new RunEngine());
+    this.splitM = splitM;
     this.sport = sport;
     this.id = id;
     this.startedAt = now;
@@ -200,6 +203,7 @@ export class RunEngine {
     Object.assign(this, new RunEngine());
     this.id = run.id;
     this.sport = run.sport;
+    this.splitM = run.splitM ?? 1000;
     this.startedAt = run.startedAt;
     this.gpsDistance = run.distance;
     this.steps = run.steps;
@@ -224,6 +228,7 @@ export class RunEngine {
       steps: this.steps,
       segments: this.segments,
       splits: this.splits,
+      splitM: this.splitM,
       track: this.track,
       cadence: this.cadence,
     };
@@ -234,7 +239,7 @@ export class RunEngine {
   }
 
   private checkSplit(at: number): Split | null {
-    const km = Math.floor(this.distance / 1000);
+    const km = Math.floor(this.distance / this.splitM);
     if (km <= this.splitsDone) return null;
     const now = this.elapsed(at);
     const split = { km, ms: now - this.splitMark };

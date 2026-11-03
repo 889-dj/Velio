@@ -26,7 +26,13 @@ export function Digits({
   const punctW = size * 0.24;
   const lineH = size * 1.02;
   return (
-    <View style={[{ flexDirection: 'row', alignItems: 'flex-start' }, style]}>
+    <View
+      style={[{ flexDirection: 'row', alignItems: 'flex-start' }, style]}
+      accessible
+      accessibilityRole="text"
+      accessibilityLabel={value}
+      importantForAccessibility="yes"
+    >
       {value.split('').map((ch, i) => {
         const cell = ch >= '0' && ch <= '9' ? digitW : punctW;
         const wide = size * 2; // room for any glyph

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useReducedMotion } from 'react-native-reanimated';
 import { Digits } from './Digits';
 
 /** Counts from 0 to `to` (ease-out) and renders it with fixed-width digits. */
@@ -9,8 +10,10 @@ export function CountUp({ to, size, decimals = 1, delay = 300, duration = 1300 }
   delay?: number;
   duration?: number;
 }) {
+  const reduced = useReducedMotion();
   const [v, setV] = useState(0);
   useEffect(() => {
+    if (reduced) return; // shown as-is below
     let raf = 0;
     const t0 = Date.now() + delay;
     const tick = () => {
@@ -20,6 +23,6 @@ export function CountUp({ to, size, decimals = 1, delay = 300, duration = 1300 }
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [to, delay, duration]);
-  return <Digits value={v.toFixed(decimals)} size={size} />;
+  }, [to, delay, duration, reduced]);
+  return <Digits value={(reduced ? to : v).toFixed(decimals)} size={size} />;
 }

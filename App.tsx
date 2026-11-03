@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useEffect, useState } from 'react';
 import { useFonts } from 'expo-font';
 import {
   BarlowCondensed_600SemiBold,
@@ -17,6 +18,8 @@ import HistoryScreen from './src/screens/HistoryScreen';
 import ShareScreen from './src/screens/ShareScreen';
 import AccountScreen from './src/screens/AccountScreen';
 import { colors } from './src/theme';
+import { loadProfile } from './src/lib/storage';
+import { setUnits } from './src/lib/units';
 
 export type RootStackParamList = {
   Home: undefined;
@@ -38,7 +41,15 @@ export default function App() {
     Inter_600SemiBold,
     Inter_700Bold,
   });
-  if (!loaded) return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
+  // the chosen distance unit is applied before the first screen renders, so nothing flashes in km
+  const [unitsReady, setUnitsReady] = useState(false);
+  useEffect(() => {
+    loadProfile()
+      .then((p) => setUnits(p.units))
+      .catch(() => {})
+      .finally(() => setUnitsReady(true));
+  }, []);
+  if (!loaded || !unitsReady) return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
 
   return (
     <SafeAreaProvider>

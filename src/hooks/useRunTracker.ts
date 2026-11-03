@@ -1,3 +1,4 @@
+import { unitMeters } from '../lib/units';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import * as Location from 'expo-location';
@@ -283,7 +284,7 @@ export function useRunTracker() {
       stepTrail.current = [];
       lastCadenceAt.current = 0;
       lastAnyFixAt.current = now;
-      eng.current.start(now, sport);
+      eng.current.start(now, sport, `${now}`, unitMeters());
       setElapsed(0);
       setCadence(0);
       sync();

@@ -6,14 +6,16 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeInDown, FadeIn, Easing } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../App';
 import { colors, font, label, radius } from '../theme';
 import { Digits, emWidth, fitSize } from '../components/Digits';
 import { LineChart, SplitBars } from '../components/charts';
 import { Run, DEFAULT_WEIGHT_KG, deleteRun, loadRuns, loadWeight, saveWeight } from '../lib/storage';
-import { Coord, formatDuration, formatKm, formatPace } from '../lib/geo';
+import { Coord, formatDuration, formatPace } from '../lib/geo';
+import { useAnim, useEnter } from '../lib/motion';
+import { formatDist, paceToUnit, speedLabel, speedToUnit, unitLabel, useUnits } from '../lib/units';
 import { boundsOf, toLngLat, useMapStyle } from '../lib/mapStyle';
 import { RouteLines, type RouteLine } from '../components/RouteLines';
 import { titleOf, whenOf } from '../lib/format';
@@ -35,7 +37,6 @@ import {
 type Props = NativeStackScreenProps<RootStackParamList, 'Activity'>;
 
 const MAP_H = 330;
-const enter = (i: number) => FadeInDown.delay(80 + i * 70).duration(480).easing(Easing.out(Easing.cubic));
 
 const mixHex = (a: string, b: string, t: number) => {
   const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
@@ -60,6 +61,11 @@ export default function ActivityScreen({ navigation, route }: Props) {
   const [selectedKm, setSelectedKm] = useState<number | null>(null);
   const [paceColors, setPaceColors] = useState(true);
   const [speedMode, setSpeedMode] = useState(false);
+  const units = useUnits();
+  const enter = useEnter(80, 70, 480);
+  const m = useAnim();
+  type Tab = 'pace' | 'splits' | 'elevation' | 'cadence';
+  const [tab, setTab] = useState<Tab>('pace');
 
   useEffect(() => {
     let alive = true;
@@ -81,7 +87,7 @@ export default function ActivityScreen({ navigation, route }: Props) {
   const a = useMemo(() => {
     if (!run) return null;
     const elev = elevationOf(run);
-    const rows = splitRows(run, elev);
+    const rows = splitRows(run, elev, undefined);
     const verdict = splitVerdict(rows);
     const cadence = cadenceOf(run);
     const similar = compareSimilar(run, history);
@@ -98,7 +104,8 @@ export default function ActivityScreen({ navigation, route }: Props) {
       stride: strideOf(run),
       insights: insightsOf({ rows, verdict, cadence, similar, elev }),
     };
-  }, [run, history]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run, history, units]);
 
   const coords = useMemo(() => (run ? run.segments.flat() : []), [run]);
   const aligned = !!run?.track && coords.length === run.track.length;
@@ -149,8 +156,9 @@ export default function ActivityScreen({ navigation, route }: Props) {
 
   const kmSlice = (km: number) => {
     if (!run?.track || !aligned) return [];
-    const lo = (km - 1) * 1000;
-    const hi = km * 1000;
+    const u = a?.rows[0]?.unitM ?? 1000; // length of one split row
+    const lo = (km - 1) * u;
+    const hi = km * u;
     return coords.filter((_, i) => run.track![i][1] >= lo && run.track![i][1] <= hi + 40);
   };
 
@@ -166,6 +174,15 @@ export default function ActivityScreen({ navigation, route }: Props) {
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers, selectedKm]);
+
+  const initialView = useMemo(() => {
+    const b = coords.length > 1 ? boundsOf(coords) : null;
+    return b
+      ? { bounds: b, padding: { top: 110, right: 40, bottom: 150, left: 40 } }
+      : { center: coords[0] ? toLngLat(coords[0]) : ([0, 20] as [number, number]), zoom: coords[0] ? 15 : 1.5 };
+    // framed once when the map mounts; later changes go through fit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fit = (pts: Coord[], animated: boolean, bottom = 150) => {
     const b = pts.length < 2 ? null : boundsOf(pts);
@@ -209,19 +226,29 @@ export default function ActivityScreen({ navigation, route }: Props) {
         <Ionicons name="alert-circle-outline" size={40} color={colors.dim} />
         <Text style={s.emptyTitle}>We couldn’t find this activity</Text>
         <Text style={s.emptySub}>It may have been deleted.</Text>
-        <Pressable onPress={() => navigation.goBack()} style={s.backBtn}>
+        <Pressable onPress={() => navigation.goBack()} style={s.backBtn} accessibilityRole="button" accessibilityLabel="Go back">
           <Text style={s.backTxt}>Go back</Text>
         </Pressable>
       </View>
     );
   }
 
-  const chartW = width - 40 - 32;
   const hasTrack = !!run.track && run.track.length > 5;
+  const hasPace = hasTrack && a.pace.length > 3;
+  const tabs: { k: Tab; label: string }[] = [
+    ...(hasPace ? [{ k: 'pace' as Tab, label: 'Pace' }] : []),
+    ...(a.rows.length > 0 && a.avg != null ? [{ k: 'splits' as Tab, label: 'Splits' }] : []),
+    ...(hasTrack ? [{ k: 'elevation' as Tab, label: 'Elevation' }] : []),
+    ...(a.cadence ? [{ k: 'cadence' as Tab, label: 'Cadence' }] : []),
+  ];
+  // an older run has no pace chart, so the first tab that exists opens instead
+  const activeTab: Tab | null = tabs.some((t) => t.k === tab) ? tab : (tabs[0]?.k ?? null);
+
+  const chartW = width - 40 - 32;
   const kcal = caloriesOf(run, weight);
   const climbPerKm = a.elev ? a.elev.gain / Math.max(run.distance / 1000, 0.1) : 0;
-  const paceData = speedMode ? a.pace.map((p) => ({ x: p.x, y: 3600 / p.y })) : a.pace;
-  const paceAvg = a.avg == null ? null : speedMode ? 3600 / a.avg : a.avg;
+  const paceData = speedMode ? a.pace.map((p) => ({ x: p.x, y: speedToUnit(3600 / p.y) })) : a.pace;
+  const paceAvg = a.avg == null ? null : speedMode ? speedToUnit(3600 / a.avg) : a.avg;
   const marker = scrubKm != null ? coordAtKm(scrubKm) : null;
 
   return (
@@ -244,7 +271,7 @@ export default function ActivityScreen({ navigation, route }: Props) {
               attributionPosition={{ top: insets.top + 64, left: 10 }}
               onDidFinishLoadingMap={() => fit(coords, false)}
             >
-              <Camera ref={camera} initialViewState={{ center: coords[0] ? toLngLat(coords[0]) : [0, 20], zoom: coords[0] ? 14 : 1.5 }} />
+              <Camera ref={camera} maxZoom={17} initialViewState={initialView} />
               <RouteLines id="route" lines={routeLines} />
               {coords.length > 0 && (
                 <Marker lngLat={toLngLat(coords[0])} anchor="center">
@@ -272,10 +299,10 @@ export default function ActivityScreen({ navigation, route }: Props) {
           <LinearGradient colors={['rgba(11,11,12,0)', colors.bg]} style={s.bottomFade} pointerEvents="none" />
 
           <View style={[s.topRow, { top: insets.top + 8 }]}>
-            <GlassButton icon="chevron-back" onPress={() => navigation.goBack()} />
+            <GlassButton icon="chevron-back" label="Back" onPress={() => navigation.goBack()} />
             <View style={{ flexDirection: 'row', gap: 10 }}>
-              <GlassButton icon="share-outline" onPress={() => navigation.navigate('Share', { id: run.id })} />
-              <GlassButton icon="trash-outline" onPress={confirmDelete} />
+              <GlassButton icon="share-outline" label="Share this activity" onPress={() => navigation.navigate('Share', { id: run.id })} />
+              <GlassButton icon="trash-outline" label="Delete this activity" onPress={confirmDelete} />
             </View>
           </View>
 
@@ -286,6 +313,9 @@ export default function ActivityScreen({ navigation, route }: Props) {
                 setPaceColors((v) => !v);
               }}
               style={s.mapChip}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: paceColors }}
+              accessibilityLabel="Colour the route by pace"
             >
               <View style={[s.mapChipDot, { backgroundColor: paceColors ? colors.accent : colors.dim }]} />
               <Text style={s.mapChipTxt}>Pace colours</Text>
@@ -302,15 +332,15 @@ export default function ActivityScreen({ navigation, route }: Props) {
           {/* headline numbers */}
           <Animated.View entering={enter(0)} style={s.trio}>
             {(() => {
-              const vals = [formatKm(run.distance), formatDuration(run.elapsed), formatPace(a.avg)];
+              const vals = [formatDist(run.distance), formatDuration(run.elapsed), formatPace(a.avg)];
               const size = fitSize(vals, width - 40, 48);
               return (
                 <>
-                  <Big label="Distance · km" value={vals[0]} size={size} />
+                  <Big label={`Distance · ${unitLabel()}`} value={vals[0]} size={size} />
                   <View style={s.vr} />
                   <Big label="Time" value={vals[1]} size={size} />
                   <View style={s.vr} />
-                  <Big label="Avg pace · /km" value={vals[2]} size={size} />
+                  <Big label={`Avg pace · /${unitLabel()}`} value={vals[2]} size={size} />
                 </>
               );
             })()}
@@ -342,8 +372,29 @@ export default function ActivityScreen({ navigation, route }: Props) {
             </Animated.View>
           )}
 
+          {/* analysis: one chart at a time instead of four stacked cards */}
+          {tabs.length > 1 && (
+            <View style={s.tabs} accessibilityRole="tablist">
+              {tabs.map((t) => (
+                <Pressable
+                  key={t.k}
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setTab(t.k);
+                    setSelectedKm(null);
+                  }}
+                  style={[s.tab, activeTab === t.k && s.tabOn]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: activeTab === t.k }}
+                >
+                  <Text style={[s.tabTxt, activeTab === t.k && { color: colors.onAccent }]}>{t.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
           {/* pace */}
-          {hasTrack && a.pace.length > 3 ? (
+          {activeTab === 'pace' && hasPace ? (
             <Animated.View entering={enter(3)} style={s.card}>
               <View style={s.cardHead}>
                 <Text style={s.cardTitle}>Pace</Text>
@@ -358,6 +409,9 @@ export default function ActivityScreen({ navigation, route }: Props) {
                           setSpeedMode(m === 'Speed');
                         }}
                         style={[s.segItem, on && s.segOn]}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: on }}
+                        accessibilityLabel={m === 'Speed' ? 'Show speed' : 'Show pace'}
                       >
                         <Text style={[s.segTxt, on && { color: colors.onAccent }]}>{m}</Text>
                       </Pressable>
@@ -373,7 +427,7 @@ export default function ActivityScreen({ navigation, route }: Props) {
                   invertY={!speedMode}
                   avg={paceAvg}
                   fmtY={(v) => (speedMode ? v.toFixed(1) : formatPace(v))}
-                  unit={speedMode ? 'km/h' : '/km'}
+                  unit={speedMode ? speedLabel() : `/${unitLabel()}`}
                   onScrub={setScrubKm}
                 />
               </View>
@@ -382,23 +436,23 @@ export default function ActivityScreen({ navigation, route }: Props) {
                 {climbPerKm > 15 ? ' This run was hilly, so slower stretches often match the climbs.' : ''}
               </Text>
             </Animated.View>
-          ) : (
+          ) : !hasPace ? (
             <Animated.View entering={enter(3)} style={s.card}>
               <Text style={s.cardTitle}>Pace chart</Text>
               <Text style={s.note}>Detailed pace, elevation and cadence charts are recorded for activities from this version on. This one has splits only.</Text>
             </Animated.View>
-          )}
+          ) : null}
 
           {/* splits */}
-          {a.rows.length > 0 && a.avg != null && (
+          {activeTab === 'splits' && a.rows.length > 0 && a.avg != null && (
             <Animated.View entering={enter(4)} style={s.card}>
               <View style={s.cardHead}>
                 <Text style={s.cardTitle}>Splits</Text>
-                <Text style={s.cardMeta}>vs avg, s/km</Text>
+                <Text style={s.cardMeta}>vs avg, s/{a.rows[0]?.unitM === 1000 ? 'km' : 'mi'}</Text>
               </View>
               <SplitBars rows={a.rows} avgPace={a.avg} selected={selectedKm} onSelect={setSelectedKm} />
               <Text style={s.note}>
-                Bar length is speed from zero; the white tick is your average.{aligned ? ' Tap a km to see it on the map.' : ''}
+                Bar length is speed from zero; the white tick is your average.{aligned ? ' Tap a split to see it on the map.' : ''}
               </Text>
               {(a.verdict || a.variability) && (
                 <View style={s.pillRow}>
@@ -415,7 +469,7 @@ export default function ActivityScreen({ navigation, route }: Props) {
           )}
 
           {/* elevation */}
-          {hasTrack && (
+          {activeTab === 'elevation' && hasTrack && (
             <Animated.View entering={enter(5)} style={s.card}>
               <Text style={s.cardTitle}>Elevation</Text>
               {a.elev && a.elev.series.length > 3 ? (
@@ -452,7 +506,7 @@ export default function ActivityScreen({ navigation, route }: Props) {
           )}
 
           {/* cadence */}
-          {a.cadence && (
+          {activeTab === 'cadence' && a.cadence && (
             <Animated.View entering={enter(6)} style={s.card}>
               <Text style={s.cardTitle}>Cadence</Text>
               {a.cadence.series.length > 3 ? (
@@ -506,7 +560,7 @@ export default function ActivityScreen({ navigation, route }: Props) {
             {a.similar && (
               <Row
                 k="Vs similar runs"
-                v={`${a.similar.deltaSec <= 0 ? '−' : '+'}${Math.round(Math.abs(a.similar.deltaSec))} s/km`}
+                v={`${a.similar.deltaSec <= 0 ? '−' : '+'}${Math.round(Math.abs(paceToUnit(a.similar.deltaSec)))} s/${unitLabel()}`}
                 hint={`last ${a.similar.count} runs of similar length`}
                 last
               />
@@ -519,7 +573,7 @@ export default function ActivityScreen({ navigation, route }: Props) {
       <Modal visible={weightOpen} transparent animationType="fade" onRequestClose={() => setWeightOpen(false)}>
         <View style={s.modalBack}>
           <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
-          <Animated.View entering={FadeIn} style={s.modal}>
+          <Animated.View entering={m(FadeIn)} style={s.modal}>
             <Text style={s.modalTitle}>Your weight</Text>
             <Text style={s.modalSub}>Only used to estimate calories. It stays on this phone.</Text>
             <View style={s.stepper}>
@@ -533,7 +587,7 @@ export default function ActivityScreen({ navigation, route }: Props) {
               <Step label="+5" onPress={() => setDraftWeight((w) => Math.min(200, w + 5))} />
             </View>
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 20 }}>
-              <Pressable onPress={() => setWeightOpen(false)} style={[s.modalBtn, { backgroundColor: colors.surface2 }]}>
+              <Pressable onPress={() => setWeightOpen(false)} accessibilityRole="button" style={[s.modalBtn, { backgroundColor: colors.surface2 }]}>
                 <Text style={s.modalBtnTxt}>Cancel</Text>
               </Pressable>
               <Pressable
@@ -563,7 +617,7 @@ const withAlpha = (hex: string, a: number) => {
 
 function Big({ label: l, value, size }: { label: string; value: string; size: number }) {
   return (
-    <View style={{ flex: emWidth(value) + 1, alignItems: 'center' }}>
+    <View style={{ flex: emWidth(value) + 1, alignItems: 'center' }} accessible accessibilityLabel={`${l}: ${value}`}>
       <Digits value={value} size={size} weight={font.d800} />
       <Text style={[label, { marginTop: 2, fontSize: 10, letterSpacing: 1 }]} numberOfLines={1}>
         {l}
@@ -616,9 +670,9 @@ function Step({ label: l, onPress }: { label: string; onPress: () => void }) {
   );
 }
 
-function GlassButton({ icon, onPress }: { icon: keyof typeof Ionicons.glyphMap; onPress: () => void }) {
+function GlassButton({ icon, onPress, label: a11y }: { icon: keyof typeof Ionicons.glyphMap; onPress: () => void; label: string }) {
   return (
-    <Pressable onPress={onPress} hitSlop={8} style={s.glass}>
+    <Pressable onPress={onPress} hitSlop={8} style={s.glass} accessibilityRole="button" accessibilityLabel={a11y}>
       <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
       <Ionicons name={icon} size={20} color={colors.text} />
     </Pressable>
@@ -637,7 +691,7 @@ const s = StyleSheet.create({
   bottomFade: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 150 },
   topRow: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between' },
   glass: { width: 44, height: 44, borderRadius: 22, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.hairline },
-  mapChip: { position: 'absolute', right: 16, bottom: 74, flexDirection: 'row', alignItems: 'center', gap: 7, height: 34, paddingHorizontal: 12, borderRadius: radius.pill, backgroundColor: 'rgba(23,24,27,0.85)', borderWidth: 1, borderColor: colors.hairline },
+  mapChip: { position: 'absolute', right: 16, bottom: 74, flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 44, paddingHorizontal: 12, borderRadius: radius.pill, backgroundColor: 'rgba(23,24,27,0.85)', borderWidth: 1, borderColor: colors.hairline },
   mapChipDot: { width: 8, height: 8, borderRadius: 4 },
   mapChipTxt: { color: colors.text, fontFamily: font.t600, fontSize: 12 },
   titleBlock: { position: 'absolute', left: 20, bottom: 18 },
@@ -666,8 +720,12 @@ const s = StyleSheet.create({
   insightIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   insightTxt: { flex: 1, color: colors.text, fontFamily: font.t500, fontSize: 14, lineHeight: 20, paddingTop: 5 },
 
+  tabs: { flexDirection: 'row', gap: 8, marginTop: 18 },
+  tab: { flex: 1, minHeight: 44, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.hairline, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  tabOn: { backgroundColor: colors.accent, borderColor: colors.accent },
+  tabTxt: { color: colors.mute, fontFamily: font.t700, fontSize: 12 },
   seg: { flexDirection: 'row', backgroundColor: colors.surface2, borderRadius: radius.pill, padding: 3 },
-  segItem: { height: 30, paddingHorizontal: 14, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
+  segItem: { height: 40, minWidth: 44, paddingHorizontal: 14, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
   segOn: { backgroundColor: colors.accent },
   segTxt: { color: colors.mute, fontFamily: font.t600, fontSize: 12 },
 

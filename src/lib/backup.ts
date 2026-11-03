@@ -1,8 +1,8 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Run, loadRuns, RUNS_KEY } from './storage';
+import { Run, loadRuns, saveRuns } from './storage';
 
-export const MAX_FILE_BYTES = 4 * 1024 * 1024;
-export const MAX_STORE_BYTES = 5 * 1024 * 1024;
+// Runs live in one file each, so the library has no practical size limit; this only stops a wrong, huge file
+// from being read into memory. A year of daily runs is roughly 30-40 MB of JSON.
+export const MAX_FILE_BYTES = 64 * 1024 * 1024;
 /** "strava-clone" is the app's name before the rename; old exports still carry it. */
 const ACCEPTED_APPS = ['velio', 'strava-clone'];
 
@@ -31,14 +31,15 @@ export function isValidRun(r: unknown): r is Run {
     x.segments.every((s) => Array.isArray(s) && s.every(isCoord)) &&
     Array.isArray(x.splits) &&
     x.splits.every((s) => !!s && isNum((s as { km: unknown }).km) && isNum((s as { ms: unknown }).ms)) &&
+    (x.splitM === undefined || (isNum(x.splitM) && x.splitM > 0)) &&
     (x.track === undefined || Array.isArray(x.track)) &&
     (x.cadence === undefined || Array.isArray(x.cadence))
   );
 }
 
 /** Pure part of a restore: validates everything, writes nothing. */
-export function planImport(text: string, existing: Run[]): { next: Run[]; result: ImportResult } {
-  if (text.length > MAX_FILE_BYTES) throw new ImportError('That file is larger than 4 MB, so it can’t be a Velio backup.');
+export function planImport(text: string, existing: Run[]): { next: Run[]; fresh: Run[]; result: ImportResult } {
+  if (text.length > MAX_FILE_BYTES) throw new ImportError('That file is larger than 64 MB, so it can’t be a Velio backup.');
   let data: unknown;
   try {
     data = JSON.parse(text);
@@ -61,15 +62,12 @@ export function planImport(text: string, existing: Run[]): { next: Run[]; result
     fresh.push(r);
   }
   const next = [...existing, ...fresh];
-  if (JSON.stringify(next).length > MAX_STORE_BYTES) {
-    throw new ImportError('Importing would take this phone’s storage over 5 MB. Nothing was imported.');
-  }
-  return { next, result: { imported: fresh.length, skipped: (d.runs as Run[]).length - fresh.length } };
+  return { next, fresh, result: { imported: fresh.length, skipped: (d.runs as Run[]).length - fresh.length } };
 }
 
 export async function importRuns(text: string): Promise<ImportResult> {
   const existing = await loadRuns();
-  const { next, result } = planImport(text, existing);
-  if (result.imported > 0) await AsyncStorage.setItem(RUNS_KEY, JSON.stringify(next));
+  const { fresh, result } = planImport(text, existing);
+  if (fresh.length > 0) await saveRuns(fresh);
   return result;
 }

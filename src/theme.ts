@@ -5,7 +5,7 @@ export const colors = {
   hairline: 'rgba(255,255,255,0.08)',
   text: '#F5F5F5',
   mute: '#9A9DA5',
-  dim: '#5D6068',
+  dim: '#868A93', // 5.1:1 on surface, 4.5:1 on surface2 (was #5D6068, 2.8:1)
   accent: '#C6FF3D', // electric lime
   accentDim: 'rgba(198,255,61,0.14)',
   onAccent: '#0B0B0C',

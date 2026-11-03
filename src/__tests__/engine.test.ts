@@ -183,3 +183,40 @@ describe('StepGate', () => {
     expect(g.add(-3, T0)).toBe(0);
   });
 });
+
+describe('RunEngine split length', () => {
+  // 5 m/s north for `metres`, one fix per second
+  const runFor = (e: RunEngine, metres: number) => {
+    let last = null;
+    for (let m = 0; m <= metres; m += 5) last = e.ingest(fix(m, (m / 5) * 1000 + 1000)) ?? last;
+    return last;
+  };
+
+  test('S1 kilometre splits by default', () => {
+    const e = started();
+    runFor(e, 2100);
+    expect(e.splits.map((s) => s.km)).toEqual([1, 2]);
+    expect(e.toRun(T0 + 1e7).splitM).toBe(1000);
+  });
+
+  test('S2 a mile run splits every 1609.344 m and records the length', () => {
+    const e = new RunEngine();
+    e.start(T0, 'run', 'r2', 1609.344);
+    runFor(e, 3300);
+    expect(e.splits.map((s) => s.km)).toEqual([1, 2]);
+    expect(e.toRun(T0 + 1e7).splitM).toBe(1609.344);
+    // ~5 m/s over 1609 m is about 322 s
+    expect(e.splits[0].ms).toBeGreaterThan(315_000);
+    expect(e.splits[0].ms).toBeLessThan(330_000);
+  });
+
+  test('S3 hydrating a mile run keeps splitting in miles', () => {
+    const e = new RunEngine();
+    e.start(T0, 'run', 'r3', 1609.344);
+    runFor(e, 1700);
+    const saved = e.toRun(T0 + 400_000);
+    const again = new RunEngine();
+    again.hydrate(saved);
+    expect(again.splitM).toBe(1609.344);
+  });
+});

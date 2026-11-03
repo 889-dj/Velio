@@ -11,7 +11,9 @@ import Animated, { FadeIn, FadeInDown, FadeInUp, FadeOut, ZoomIn } from 'react-n
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../App';
 import { useRunTracker } from '../hooks/useRunTracker';
-import { formatDuration, formatKm, formatPace } from '../lib/geo';
+import { formatDuration, formatPace } from '../lib/geo';
+import { useAnim } from '../lib/motion';
+import { formatDist, toUnit, unitCaps, unitLabel, unitMeters, useUnits } from '../lib/units';
 import { boundsOf, toLngLat, useMapStyle } from '../lib/mapStyle';
 import { RouteLines, routeLinesFor } from '../components/RouteLines';
 import { colors, font, label, radius } from '../theme';
@@ -24,6 +26,8 @@ import { openSettings } from '../lib/backgroundLocation';
 type Props = NativeStackScreenProps<RootStackParamList, 'Tracking'>;
 
 export default function TrackingScreen({ navigation, route }: Props) {
+  useUnits(); // re-render if the unit changes
+  const m = useAnim(); // layout animations are skipped when Reduce Motion is on
   const sport = route.params?.sport ?? 'run';
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
@@ -245,18 +249,18 @@ export default function TrackingScreen({ navigation, route }: Props) {
         pointerEvents="box-none"
       >
         <View style={s.topRow}>
-          <GlassButton onPress={close} icon="close" />
+          <GlassButton onPress={close} icon="close" label="Close" />
           <View style={s.pill}>
             <View style={[s.dot, { backgroundColor: statusColor }]} />
             <Text style={s.pillTxt}>{statusText}</Text>
           </View>
-          <GlassButton onPress={locate} icon="locate" />
+          <GlassButton onPress={locate} icon="locate" label="Centre the map on me" />
         </View>
 
         {!finished && (
-          <Animated.View entering={FadeIn.delay(150)} style={s.readout} pointerEvents="none">
-            <Digits value={formatKm(t.distance)} size={Math.min(136, height * 0.16)} />
-            <Text style={[label, { marginTop: 2 }]}>Kilometers</Text>
+          <Animated.View entering={m(FadeIn.delay(150))} style={s.readout} pointerEvents="none">
+            <Digits value={formatDist(t.distance)} size={Math.min(136, height * 0.16)} />
+            <Text style={[label, { marginTop: 2 }]}>{unitLabel() === 'km' ? 'Kilometres' : 'Miles'}</Text>
           </Animated.View>
         )}
 
@@ -271,14 +275,14 @@ export default function TrackingScreen({ navigation, route }: Props) {
         )}
 
         {running && t.gps === 'lost' && (
-          <Animated.View entering={FadeInDown} exiting={FadeOut} style={s.lost}>
+          <Animated.View entering={m(FadeInDown)} exiting={m(FadeOut)} style={s.lost} accessibilityRole="alert" accessibilityLiveRegion="polite">
             <Ionicons name="warning" size={16} color={colors.amber} />
             <Text style={s.lostTxt}>GPS signal lost. Distance keeps counting from your steps.</Text>
           </Animated.View>
         )}
 
         {(running || paused) && t.access !== 'always' && !lockBannerHidden && (
-          <Animated.View entering={FadeInDown} exiting={FadeOut} style={s.lost}>
+          <Animated.View entering={m(FadeInDown)} exiting={m(FadeOut)} style={s.lost} accessibilityRole="alert" accessibilityLiveRegion="polite">
             <Ionicons name="lock-closed" size={16} color={colors.amber} />
             <Text style={[s.lostTxt, { flexShrink: 1 }]}>Recording may stop when your phone locks</Text>
             <Pressable onPress={keepRecordingLocked} hitSlop={8} accessibilityRole="button">
@@ -291,10 +295,10 @@ export default function TrackingScreen({ navigation, route }: Props) {
         )}
 
         {toast && !finished && (
-          <Animated.View entering={FadeInDown.springify().damping(14)} exiting={FadeOut} style={s.toast}>
+          <Animated.View entering={m(FadeInDown.springify().damping(14))} exiting={m(FadeOut)} style={s.toast} accessibilityRole="alert" accessibilityLiveRegion="polite">
             <Ionicons name="flag" size={14} color={colors.onAccent} />
             <Text style={s.toastTxt}>
-              KM {toast.km} · {formatPace(toast.ms / 1000)} /km
+              {unitCaps()} {toast.km} · {formatPace(toast.ms / unitMeters())} /{unitLabel()}
             </Text>
           </Animated.View>
         )}
@@ -302,8 +306,8 @@ export default function TrackingScreen({ navigation, route }: Props) {
 
       {/* countdown */}
       {count != null && count > 0 && (
-        <Animated.View entering={FadeIn} exiting={FadeOut} style={s.count} pointerEvents="none">
-          <Animated.Text key={count} entering={ZoomIn.springify().damping(12)} style={s.countTxt}>
+        <Animated.View entering={m(FadeIn)} exiting={m(FadeOut)} style={s.count} pointerEvents="none">
+          <Animated.Text key={count} entering={m(ZoomIn.springify().damping(12))} style={s.countTxt}>
             {count}
           </Animated.Text>
         </Animated.View>
@@ -312,7 +316,7 @@ export default function TrackingScreen({ navigation, route }: Props) {
       {/* bottom panel */}
       <Animated.View
         key={t.status}
-        entering={FadeInUp.duration(380)}
+        entering={m(FadeInUp.duration(380))}
         style={[s.panelWrap]}
       >
         <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
@@ -332,7 +336,7 @@ export default function TrackingScreen({ navigation, route }: Props) {
                   <Ionicons name="navigate" size={18} color={t.initial ? colors.accent : colors.dim} />
                 </View>
               </View>
-              <Pressable onPress={begin} style={({ pressed }) => [s.startBtn, pressed && { transform: [{ scale: 0.98 }] }]}>
+              <Pressable onPress={begin} style={({ pressed }) => [s.startBtn, pressed && { transform: [{ scale: 0.98 }] }]} accessibilityRole="button" accessibilityLabel="Start recording">
                 <Ionicons name="play" size={24} color={colors.onAccent} />
                 <Text style={s.startTxt}>Start</Text>
               </Pressable>
@@ -349,7 +353,7 @@ export default function TrackingScreen({ navigation, route }: Props) {
                     <>
                       <Metric label="Time" value={vals[0]} size={size} />
                       <View style={s.vr} />
-                      <Metric label="Pace /km" value={vals[1]} size={size} />
+                      <Metric label={`Pace /${unitLabel()}`} value={vals[1]} size={size} />
                       <View style={s.vr} />
                       <Metric label="Cadence" value={vals[2]} size={size} />
                     </>
@@ -366,10 +370,12 @@ export default function TrackingScreen({ navigation, route }: Props) {
                       t.pause();
                     }}
                     style={({ pressed }) => [s.pause, pressed && { transform: [{ scale: 0.94 }] }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Pause recording"
                   >
                     <Ionicons name="pause" size={34} color={colors.onAccent} />
                   </Pressable>
-                  <Chip icon="speedometer" text={formatPace(t.avgPace)} sub="avg /km" />
+                  <Chip icon="speedometer" text={formatPace(t.avgPace)} sub={`avg /${unitLabel()}`} />
                 </View>
               ) : (
                 <View style={s.ctrlRow}>
@@ -379,6 +385,8 @@ export default function TrackingScreen({ navigation, route }: Props) {
                       t.resume();
                     }}
                     style={({ pressed }) => [s.resume, pressed && { transform: [{ scale: 0.98 }] }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Resume recording"
                   >
                     <Ionicons name="play" size={22} color={colors.onAccent} />
                     <Text style={s.startTxt}>Resume</Text>
@@ -405,7 +413,7 @@ export default function TrackingScreen({ navigation, route }: Props) {
       </Animated.View>
 
       {explainer && (
-        <Animated.View entering={FadeIn} exiting={FadeOut} style={s.explainer}>
+        <Animated.View entering={m(FadeIn)} exiting={m(FadeOut)} style={s.explainer}>
           <View style={[s.explainerCard, { paddingBottom: insets.bottom + 20 }]}>
             <View style={s.explainerIcon}>
               <Ionicons name="navigate" size={26} color={colors.accent} />
@@ -448,8 +456,8 @@ function Summary({
       <View style={{ alignItems: 'center', marginTop: 2 }}>
         <Text style={label}>Run complete</Text>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-          <CountUp to={t.distance / 1000} size={96} decimals={2} delay={150} duration={900} />
-          <Text style={s.unit}>km</Text>
+          <CountUp to={toUnit(t.distance)} size={96} decimals={2} delay={150} duration={900} />
+          <Text style={s.unit}>{unitLabel()}</Text>
         </View>
       </View>
 
@@ -472,7 +480,7 @@ function Summary({
       <Text style={[label, { marginTop: 16, marginBottom: 8 }]}>Splits{cadenceAvg ? ` · ${cadenceAvg} spm avg` : ''}</Text>
       <ScrollView style={{ maxHeight: 120 }} showsVerticalScrollIndicator={false}>
         {t.splits.length === 0 ? (
-          <Text style={s.idleSub}>Run a full kilometre to see splits.</Text>
+          <Text style={s.idleSub}>Run a full {unitLabel() === 'km' ? 'kilometre' : 'mile'} to see splits.</Text>
         ) : (
           t.splits.map((sp) => {
             const w = slowest === fastest ? 1 : 0.45 + 0.55 * (1 - (sp.ms - fastest) / (slowest - fastest));
@@ -482,17 +490,17 @@ function Summary({
                 <View style={s.splitTrack}>
                   <View style={[s.splitFill, { width: `${w * 100}%`, opacity: sp.ms === fastest ? 1 : 0.55 }]} />
                 </View>
-                <Text style={s.splitPace}>{formatPace(sp.ms / 1000)}</Text>
+                <Text style={s.splitPace}>{formatPace(sp.ms / unitMeters())}</Text>
               </View>
             );
           })
         )}
       </ScrollView>
 
-      <Pressable onPress={onSave} style={({ pressed }) => [s.startBtn, { marginTop: 16 }, pressed && { transform: [{ scale: 0.98 }] }]}>
+      <Pressable onPress={onSave} accessibilityRole="button" accessibilityLabel="Save activity" style={({ pressed }) => [s.startBtn, { marginTop: 16 }, pressed && { transform: [{ scale: 0.98 }] }]}>
         <Text style={s.startTxt}>Save activity</Text>
       </Pressable>
-      <Pressable onPress={onDiscard} style={{ alignItems: 'center', paddingTop: 14 }}>
+      <Pressable onPress={onDiscard} accessibilityRole="button" accessibilityLabel="Discard activity" style={{ alignItems: 'center', paddingTop: 14, minHeight: 44 }}>
         <Text style={s.discard}>Discard</Text>
       </Pressable>
     </>
@@ -501,7 +509,7 @@ function Summary({
 
 function Metric({ label: l, value, size }: { label: string; value: string; size: number }) {
   return (
-    <View style={{ flex: emWidth(value) + 1, alignItems: 'center' }}>
+    <View style={{ flex: emWidth(value) + 1, alignItems: 'center' }} accessible accessibilityLabel={`${l}: ${value}`}>
       <Digits value={value} size={size} weight={font.d700} />
       <Text style={[label, { marginTop: 2 }]}>{l}</Text>
     </View>
@@ -510,7 +518,7 @@ function Metric({ label: l, value, size }: { label: string; value: string; size:
 
 function Chip({ icon, text, sub }: { icon: keyof typeof Ionicons.glyphMap; text: string; sub: string }) {
   return (
-    <View style={s.chip}>
+    <View style={s.chip} accessible accessibilityLabel={`${text} ${sub}`}>
       <Ionicons name={icon} size={16} color={colors.mute} />
       <Text style={s.chipV}>{text}</Text>
       <Text style={s.chipS}>{sub}</Text>
@@ -518,9 +526,9 @@ function Chip({ icon, text, sub }: { icon: keyof typeof Ionicons.glyphMap; text:
   );
 }
 
-function GlassButton({ onPress, icon }: { onPress: () => void; icon: keyof typeof Ionicons.glyphMap }) {
+function GlassButton({ onPress, icon, label: a11y }: { onPress: () => void; icon: keyof typeof Ionicons.glyphMap; label: string }) {
   return (
-    <Pressable onPress={onPress} hitSlop={8} style={s.glass}>
+    <Pressable onPress={onPress} hitSlop={8} style={s.glass} accessibilityRole="button" accessibilityLabel={a11y}>
       <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
       <Ionicons name={icon} size={20} color={colors.text} />
     </Pressable>

@@ -1,5 +1,7 @@
 import type { Run } from './storage';
 import { formatPace } from './geo';
+import { splitsOf } from './splits';
+import { paceToUnit, unitLabel, unitMeters } from './units';
 
 export type Pt = { x: number; y: number }; // x = km into the run
 
@@ -127,7 +129,8 @@ export function elevationOf(run: Run): Elevation | null {
 }
 
 export type SplitRow = {
-  km: number; // 1, 2, 3 ... (partial last row keeps the next integer)
+  km: number; // 1, 2, 3 ... (partial last row keeps the next integer); counts display units, not always km
+  unitM: number; // metres in one full row: 1000 or 1609.344
   dist: number; // metres covered in this row
   ms: number;
   pace: number; // sec/km
@@ -136,29 +139,33 @@ export type SplitRow = {
   delta: number; // sec/km vs the run's average pace (negative = faster)
 };
 
-export function splitRows(run: Run, elev: Elevation | null): SplitRow[] {
+export function splitRows(run: Run, elev: Elevation | null, unitM = unitMeters()): SplitRow[] {
   const avg = avgPaceOf(run);
   if (avg == null) return [];
-  const rows: SplitRow[] = run.splits.map((s, i) => {
-    const pace = s.ms / 1000;
+  const list = splitsOf(run, unitM);
+  const u = list.unitM;
+  const rows: SplitRow[] = list.splits.map((s, i) => {
+    const pace = s.ms / u; // ms per metre = seconds per km
     return {
       km: s.km,
-      dist: 1000,
+      unitM: u,
+      dist: u,
       ms: s.ms,
       pace,
       partial: false,
-      climb: elev ? elev.gainIn(i * 1000, (i + 1) * 1000) : null,
+      climb: elev ? elev.gainIn(i * u, (i + 1) * u) : null,
       delta: pace - avg,
     };
   });
-  const done = rows.length * 1000;
+  const done = rows.length * u;
   const rem = run.distance - done;
   if (rem >= 100) {
-    const ms = run.elapsed - run.splits.reduce((a, s) => a + s.ms, 0);
+    const ms = run.elapsed - list.splits.reduce((a, s) => a + s.ms, 0);
     if (ms > 0) {
-      const pace = ms / 1000 / (rem / 1000);
+      const pace = ms / rem;
       rows.push({
         km: rows.length + 1,
+        unitM: u,
         dist: rem,
         ms,
         pace,
@@ -240,8 +247,13 @@ export function recordsOf(run: Run, rows: SplitRow[], others: Run[]): string[] {
   const full = rows.filter((r) => !r.partial);
   if (full.length) {
     const best = Math.min(...full.map((r) => r.ms));
-    const prev = prior.flatMap((o) => o.splits.map((s) => s.ms));
-    if (prev.length && best < Math.min(...prev)) out.push('Fastest km');
+    const u = full[0].unitM;
+    // only splits of the same length are comparable
+    const prev = prior.flatMap((o) => {
+      const l = splitsOf(o, u);
+      return l.unitM === u ? l.splits.map((s) => s.ms) : [];
+    });
+    if (prev.length && best < Math.min(...prev)) out.push(`Fastest ${unitLabel()}`);
   }
   if (prior.length && run.distance > Math.max(...prior.map((o) => o.distance))) out.push('Longest run');
   if (!prior.length) out.push('First activity');
@@ -250,7 +262,9 @@ export function recordsOf(run: Run, rows: SplitRow[], others: Run[]): string[] {
 
 export type Insight = { icon: 'trending-up' | 'flash' | 'trending-down' | 'pulse' | 'people' | 'speedometer'; tone: 'good' | 'warn' | 'info'; text: string };
 
-const secs = (n: number) => `${Math.round(Math.abs(n))} s`;
+/** A pace difference (given in seconds per km) as whole seconds per display unit. */
+const secs = (n: number) => `${Math.round(Math.abs(paceToUnit(n)))} s`;
+const rowName = (r: SplitRow) => `${r.unitM === 1000 ? 'Km' : 'Mi'} ${r.km}`;
 
 export function insightsOf(args: {
   rows: SplitRow[];
@@ -269,7 +283,7 @@ export function insightsOf(args: {
       verdict.kind === 'negative'
         ? { icon: 'trending-up', tone: 'good', text: `Negative split: your second half was ${p}% faster than the first.` }
         : verdict.kind === 'positive'
-          ? { icon: 'trending-down', tone: 'warn', text: `You started fast: the second half was ${p}% slower. Easing the first km usually helps.` }
+          ? { icon: 'trending-down', tone: 'warn', text: `You started fast: the second half was ${p}% slower. Easing the first ${unitLabel()} usually helps.` }
           : { icon: 'pulse', tone: 'good', text: `Even pacing: both halves within ${EVEN_SPLIT_PCT}% of each other.` },
     );
   }
@@ -277,15 +291,15 @@ export function insightsOf(args: {
   if (full.length >= 2) {
     const fast = full.reduce((a, b) => (b.pace < a.pace ? b : a));
     const slow = full.reduce((a, b) => (b.pace > a.pace ? b : a));
-    out.push({ icon: 'flash', tone: 'good', text: `Km ${fast.km} was your fastest at ${formatPace(fast.pace)}/km, ${secs(fast.delta)} quicker than your average.` });
+    out.push({ icon: 'flash', tone: 'good', text: `${rowName(fast)} was your fastest at ${formatPace(fast.pace)}/${unitLabel()}, ${secs(fast.delta)} quicker than your average.` });
     if (slow.km !== fast.km && slow.delta > 5) {
       const hill = slow.climb != null && slow.climb >= 8;
       out.push({
         icon: 'trending-down',
         tone: 'warn',
         text: hill
-          ? `Km ${slow.km} was slowest (+${Math.round(slow.climb as number)} m climb). Hills explain most of that drop.`
-          : `Km ${slow.km} was slowest at ${formatPace(slow.pace)}/km, ${secs(slow.delta)} off your average.`,
+          ? `${rowName(slow)} was slowest (+${Math.round(slow.climb as number)} m climb). Hills explain most of that drop.`
+          : `${rowName(slow)} was slowest at ${formatPace(slow.pace)}/${unitLabel()}, ${secs(slow.delta)} off your average.`,
       });
     }
   }
@@ -308,9 +322,9 @@ export function insightsOf(args: {
       icon: 'people',
       tone: faster ? 'good' : 'info',
       text: faster
-        ? `${secs(similar.deltaSec)}/km faster than your last ${similar.count} similar runs.`
+        ? `${secs(similar.deltaSec)}/${unitLabel()} faster than your last ${similar.count} similar runs.`
         : slower
-          ? `${secs(similar.deltaSec)}/km slower than your last ${similar.count} similar runs.`
+          ? `${secs(similar.deltaSec)}/${unitLabel()} slower than your last ${similar.count} similar runs.`
           : `In line with your last ${similar.count} similar runs.`,
     });
   }

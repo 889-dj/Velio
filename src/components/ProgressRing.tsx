@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import Svg, { Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
-import Animated, { Easing, useAnimatedProps, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, useAnimatedProps, useReducedMotion, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
 import { colors } from '../theme';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
@@ -18,10 +18,13 @@ export function ProgressRing({
 }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
+  const reduced = useReducedMotion();
   const p = useSharedValue(0);
   useEffect(() => {
-    p.value = withDelay(delay, withTiming(Math.min(progress, 1), { duration: 1300, easing: Easing.out(Easing.cubic) }));
-  }, [p, progress, delay]);
+    p.value = reduced
+      ? Math.min(progress, 1)
+      : withDelay(delay, withTiming(Math.min(progress, 1), { duration: 1300, easing: Easing.out(Easing.cubic) }));
+  }, [p, progress, delay, reduced]);
   const props = useAnimatedProps(() => ({ strokeDashoffset: c * (1 - p.value) }));
   return (
     <Svg width={size} height={size} style={{ transform: [{ rotate: '-90deg' }] }}>

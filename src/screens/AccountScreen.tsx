@@ -29,6 +29,7 @@ import Animated, { FadeInDown, Easing, useReducedMotion } from 'react-native-rea
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../App';
 import { colors, font, label, radius } from '../theme';
+import { Units, formatDist, fromUnit, setUnits, toUnit, unitLabel, useUnits } from '../lib/units';
 import {
   DEFAULT_WEIGHT_KG,
   Profile,
@@ -47,9 +48,10 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Account'>;
 type Perm = 'granted' | 'denied' | 'undetermined' | 'unavailable';
 type PermState = { status: Perm; canAskAgain: boolean };
 
-const GOAL_STEP = 5;
-const GOAL_MIN = 5;
-const GOAL_MAX = 200;
+// the weekly goal is stored in km; the stepper works in whichever unit is shown
+const GOAL_STEP = { km: 5, mi: 3 };
+const GOAL_MIN = { km: 5, mi: 3 };
+const GOAL_MAX = { km: 200, mi: 125 };
 const WEIGHT_MIN = 30;
 const WEIGHT_MAX = 200;
 
@@ -123,6 +125,8 @@ export default function AccountScreen({ navigation }: Props) {
     return () => sub.remove();
   }, [readPerms]);
 
+  const units = useUnits();
+
   const update = (patch: Partial<Profile>) => {
     const next = { ...(profileRef.current as Profile), ...patch };
     profileRef.current = next;
@@ -133,7 +137,7 @@ export default function AccountScreen({ navigation }: Props) {
   const totals = useMemo(
     () => ({
       count: runs.length,
-      km: runs.reduce((a, r) => a + r.distance, 0) / 1000,
+      m: runs.reduce((a, r) => a + r.distance, 0),
       ms: runs.reduce((a, r) => a + r.elapsed, 0),
     }),
     [runs],
@@ -153,7 +157,10 @@ export default function AccountScreen({ navigation }: Props) {
   const step = (kind: 'goal' | 'weight', dir: 1 | -1) => {
     Haptics.selectionAsync();
     if (kind === 'goal' && profile) {
-      update({ weeklyGoalKm: Math.min(GOAL_MAX, Math.max(GOAL_MIN, profile.weeklyGoalKm + dir * GOAL_STEP)) });
+      const u = units;
+      const shown = Math.round(toUnit(profile.weeklyGoalKm * 1000, u));
+      const next = Math.min(GOAL_MAX[u], Math.max(GOAL_MIN[u], shown + dir * GOAL_STEP[u]));
+      update({ weeklyGoalKm: +(fromUnit(next, u) / 1000).toFixed(2) });
     } else if (kind === 'weight') {
       const w = Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, weight + dir));
       setWeight(w);
@@ -188,7 +195,7 @@ export default function AccountScreen({ navigation }: Props) {
       const data = await exportAll();
       const f = new File(Paths.cache, `run-data-${new Date().toISOString().slice(0, 10)}.json`);
       f.create({ overwrite: true });
-      f.write(JSON.stringify(data, null, 2));
+      f.write(JSON.stringify(data));
       await Sharing.shareAsync(f.uri, { mimeType: 'application/json', UTI: 'public.json', dialogTitle: 'Export your data' });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       return true;
@@ -207,7 +214,7 @@ export default function AccountScreen({ navigation }: Props) {
       if (pick.canceled || !pick.assets?.[0]) return;
       const asset = pick.assets[0];
       if (asset.size != null && asset.size > MAX_FILE_BYTES) {
-        throw new ImportError('That file is larger than 4 MB, so it can’t be a Velio backup.');
+        throw new ImportError('That file is larger than 64 MB, so it can’t be a Velio backup.');
       }
       const text = await new File(asset.uri).text();
       const { imported, skipped } = await importRuns(text);
@@ -310,7 +317,7 @@ export default function AccountScreen({ navigation }: Props) {
             <Animated.View entering={enter(1)} style={s.totals}>
               <Total big={String(totals.count)} unit="" k="Activities" />
               <View style={s.vr} />
-              <Total big={totals.km >= 100 ? String(Math.round(totals.km)) : totals.km.toFixed(1)} unit="km" k="Distance" />
+              <Total big={toUnit(totals.m) >= 100 ? String(Math.round(toUnit(totals.m))) : formatDist(totals.m, 1)} unit={unitLabel()} k="Distance" />
               <View style={s.vr} />
               <Total big={fmtHours(totals.ms)} unit={totals.ms >= 3600000 ? 'h' : 'min'} k="Moving" />
             </Animated.View>
@@ -318,16 +325,25 @@ export default function AccountScreen({ navigation }: Props) {
             <Animated.View entering={enter(2)}>
               <Text style={s.caption}>Goals and body</Text>
               <View style={s.group}>
+                <UnitsRow
+                  value={units}
+                  onChange={(u) => {
+                    Haptics.selectionAsync();
+                    setUnits(u);
+                    update({ units: u });
+                  }}
+                />
+                <View style={s.sep} />
                 <StepperRow
                   icon="flag"
                   title="Weekly goal"
                   hint="Drives the ring on Home"
-                  value={profile.weeklyGoalKm}
-                  unit="km"
+                  value={Math.round(toUnit(profile.weeklyGoalKm * 1000))}
+                  unit={unitLabel()}
                   onDec={() => step('goal', -1)}
                   onInc={() => step('goal', 1)}
-                  decDisabled={profile.weeklyGoalKm <= GOAL_MIN}
-                  incDisabled={profile.weeklyGoalKm >= GOAL_MAX}
+                  decDisabled={Math.round(toUnit(profile.weeklyGoalKm * 1000)) <= GOAL_MIN[units]}
+                  incDisabled={Math.round(toUnit(profile.weeklyGoalKm * 1000)) >= GOAL_MAX[units]}
                   decLabel="Decrease weekly goal"
                   incLabel="Increase weekly goal"
                 />
@@ -528,6 +544,32 @@ function Chip({ icon, danger }: { icon: keyof typeof Ionicons.glyphMap; danger?:
   );
 }
 
+function UnitsRow({ value, onChange }: { value: Units; onChange: (u: Units) => void }) {
+  return (
+    <View style={s.row}>
+      <Chip icon="speedometer" />
+      <View style={s.rowText}>
+        <Text style={s.rowTitle}>Units</Text>
+        <Text style={s.rowHint}>Distance, pace and speed everywhere</Text>
+      </View>
+      <View style={s.seg} accessibilityRole="radiogroup">
+        {(['km', 'mi'] as Units[]).map((u) => (
+          <Pressable
+            key={u}
+            onPress={() => onChange(u)}
+            style={[s.segBtn, value === u && s.segOn]}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: value === u }}
+            accessibilityLabel={u === 'km' ? 'Kilometres' : 'Miles'}
+          >
+            <Text style={[s.segTxt, value === u && { color: colors.onAccent }]}>{u}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function StepperRow(p: {
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
@@ -664,16 +706,20 @@ const s = StyleSheet.create({
   chip: { width: 30, height: 30, borderRadius: 9, backgroundColor: colors.accentDim, alignItems: 'center', justifyContent: 'center' },
 
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  stepBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.surface2, alignItems: 'center', justifyContent: 'center' },
+  stepBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surface2, alignItems: 'center', justifyContent: 'center' },
   stepVal: { minWidth: 58, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 3 },
   stepNum: { color: colors.text, fontFamily: font.d700, fontSize: 24 },
   stepUnit: { color: colors.mute, fontFamily: font.t500, fontSize: 11 },
 
-  actionPill: { backgroundColor: colors.accent, borderRadius: radius.pill, paddingHorizontal: 14, height: 34, alignItems: 'center', justifyContent: 'center' },
+  actionPill: { backgroundColor: colors.accent, borderRadius: radius.pill, paddingHorizontal: 16, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   actionTxt: { color: colors.onAccent, fontFamily: font.t700, fontSize: 13 },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.accent },
   status: { color: colors.mute, fontFamily: font.t600, fontSize: 13 },
 
+  seg: { flexDirection: 'row', backgroundColor: colors.surface2, borderRadius: radius.pill, padding: 3 },
+  segBtn: { minWidth: 52, height: 44, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
+  segOn: { backgroundColor: colors.accent },
+  segTxt: { color: colors.mute, fontFamily: font.t700, fontSize: 13, textTransform: 'uppercase' },
   footer: { color: colors.dim, fontFamily: font.t500, fontSize: 12, textAlign: 'center', marginTop: 30 },
 
   scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' },

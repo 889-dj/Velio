@@ -79,10 +79,11 @@ const NativeStage = forwardRef<StageHandle, StageProps>(function NativeStage({ d
       return out.uri;
     },
     async still() {
-      const out = cacheFile(`run-share-${Date.now()}.png`);
+      const out = cacheFile(`run-share-${Date.now()}.jpg`);
       await show(finalFrame);
       try {
-        await recorder.snapshot({ output: toPath(out.uri), format: 'png', width: EXPORT.w, height: EXPORT.h });
+        // JPEG keeps the 1080x1920 card to a few hundred KB; PNG came out at about 6.5 MB
+        await recorder.snapshot({ output: toPath(out.uri), format: 'jpg', quality: 0.9, width: EXPORT.w, height: EXPORT.h });
       } finally {
         await show(null);
       }
@@ -105,12 +106,12 @@ const PlainStage = forwardRef<StageHandle, StageProps>(function PlainStage({ dat
 
   useImperativeHandle(ref, () => ({
     async record() {
-      throw new Error('Video export needs a development build.');
+      throw new Error('Video export isn’t available on this device.');
     },
     async still() {
       await show(finalFrame);
       try {
-        return await captureRef(view, { format: 'png', quality: 1, width: EXPORT.w, height: EXPORT.h, result: 'tmpfile' });
+        return await captureRef(view, { format: 'jpg', quality: 0.9, width: EXPORT.w, height: EXPORT.h, result: 'tmpfile' });
       } finally {
         await show(null);
       }
